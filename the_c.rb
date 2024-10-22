@@ -646,22 +646,33 @@ module Shortcuts
   end
 
   add :u, "Run system updater", ->(*args) do
-    if bash(c(:x, "pacman")).ok?
-      return bash("checkupdates #{args[1..-1].shelljoin}", :errs).ok? if args[0] == "c"
-      bash(c(:sudo, "pacman", *args), :errs).ok?
-    elsif bash(c(:x, "yum")).ok?     then bash(c(:sudo, "yum",     *args), :errs).ok?
-    elsif bash(c(:x, "apt")).ok?     then bash(c(:sudo, "apt",     *args), :errs).ok?
-    elsif bash(c(:x, "apt-get")).ok? then bash(c(:sudo, "apt-get", *args), :errs).ok?
-    else  $stderr.puts "No system updater found."; "false"
+    upd = %w[pacman yum apt apt-get].detect { bash(c(:x, _1)).ok? }
+    if    ! upd then $stderr.puts "No system updater found."; return "false"
+    elsif upd == "pacman" && args[0] == "c" then "checkupdates #{args[1..-1].shelljoin}"
+    else  c(:sudo, upd, *args)
     end
   end
 
   add :ua, "Run pikaur", ->(*args) do
-    raise NotImplementedError, caller_locations(0)[0].to_s
+    if args[0] == "c"
+      args = %w[-Qua]
+    else
+      args = args.map { _1 =~ /^-S/ ? "#{_1}a" : _1 }
+    end
+    "pikaur #{args.shelljoin}"
   end
 
   add :ui, "Arch package details, --nn for max depth", ->(*args) do
-    raise NotImplementedError, caller_locations(0)[0].to_s
+    depth = 99
+    page do |io|
+      for arg in args
+        arg =~ /^--(\d+)$/ and (depth = $~[1]; next)
+        script = "#{c(:u, "-Si", arg)}; #{c(:u, "-Qi", arg)}"
+        io.puts "\n" + bash(script).lines.map(&:rstrip).reject(&:empty?).uniq.join("\n")
+        bash("pactree -rd#{depth} #{arg.shellescape}", echo: io)
+      end
+    end
+    "true"
   end
 
   add :vb, "View binary files", ->(*args) do
