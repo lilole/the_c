@@ -28,10 +28,11 @@ module Shortcuts
     #   bashrc drastically, and speed up its load times, feel free to remove doc
     #   lines like these.
     # o Defined Ruby shortcuts MUST return one of these standard types:
-    #   - `nil`......Reports a nop to the caller.
-    #   - `String`...A bit of bash code to be evaluated in the caller's context.
-    #   - truthy.....Reports a success to the caller.
-    #   - falsey.....Reports a failure to the caller.
+    #   - `nil`.......Reports a nop to the caller.
+    #   - `String`....A bit of bash code to evaluate in the caller's context.
+    #   - `Integer`...Return the value as an exit code to the caller.
+    #   - truthy......Reports a success to the caller.
+    #   - falsey......Reports a failure to the caller.
     # o Shortcut worker methods MUST accept an `io` param if they need to output
     #   results to the console. The `io` param may simply turn out to be
     #   $stdout, but the worker method MUST NOT assume it writes to $stdout.
@@ -55,15 +56,23 @@ module Shortcuts
 
   ## {{ Helper methods
 
-  ### Add a new Ruby shortcut in a DSL style. See builtins below.
+  ### Add a new Ruby shortcut in a DSL style. See calls to this below.
     #
   def self.add(name, description, body) = @index[name] = [body, description]
 
   ### The internal Rubyized `c` function, which calls shortcuts previously
-    # defined with `add` from within Ruby code. Return values follow the rules
-    # defined in the main "Notes" section above.
+    # defined with `add` from within Ruby code. Return values are forced to
+    # follow the rules defined in the main "Notes" section above. If the given
+    # `name` is not defined, then assume the `:base` shortcut.
     #
-  def self.c(name, *args) = @index.fetch(name.to_sym)[0].call(*args)
+  def self.c(name, *args)
+    result = (sc = @index[name.to_sym]) ? sc[0].call(*args) : @index[:base][0].call(name, *args)
+    if    String === result  then result
+    elsif Integer === result then "return #{result}"
+    elsif result.nil?        then ":"
+    else  (!! result).to_s
+    end
+  end
 
   ### Prompt user for confirmation before continuing.
     # The `opts` may be any string of typable characters, with a single uppercase
@@ -91,6 +100,11 @@ module Shortcuts
     # be paged.
     #
   def self.page(*args) = IO.popen(c(:m, *args), "w") { |io| yield(io) }
+
+  ### Pass an IO to a client code block which captures lines written to it in
+    # a String, and return that String as the result.
+    #
+  def self.strout = StringIO.new { |io| yield(io); io.rewind; io.read }
 
   ### List all defined shortcuts sorted with descriptions.
     #
@@ -206,11 +220,23 @@ module Shortcuts
   end
 
   add :be, "Shorthand 'bundle exec'", ->(*args) do
-    raise NotImplementedError, caller_locations(0)[0].to_s
+    "bundle exec #{args.shelljoin}"
   end
 
-  add :cole, "Show escaped string to set xterm colors", ->(*args) do
-    raise NotImplementedError, caller_locations(0)[0].to_s
+  add :cole, "Mix given strings with xterm* color seqs", ->(*args) do
+    map = (@cole_memo ||= {
+      fblack:   30, fred:       31, fgreen:   32, fyellow:   33,
+      fblue:    34, fmagenta:   35, fcyan:    36, fwhite:    37,
+      fbblack:  90, fbred:      91, fbgreen:  92, fbyellow:  93,
+      fbblue:   94, fbmagenta:  95, fbcyan:   96, fbwhite:   97,
+      bblack:   40, bred:       41, bgreen:   42, byellow:   43,
+      bblue:    44, bmagenta:   45, bcyan:    46, bwhite:    47,
+      bbblack: 100, bbred:     101, bbgreen: 102, bbyellow: 103,
+      bbblue:  104, bbmagenta: 105, bbcyan:  106, bbwhite:  107,
+      blink:     5, nblink:     25, reset:     0
+    })
+    string = args.map { |arg| (v = map[arg.to_sym]) ? "\e[#{v}m" : arg }.join
+    +"echo " << string.shellescape
   end
 
   add :d, "Change dirs with various abbreviations", ->(*args) do
@@ -232,7 +258,7 @@ module Shortcuts
     if ! d
       $stderr.puts "Valid abbrevs:"; w = map.values.map(&:size).max
       map.each { |abb, dir| $stderr.puts "  #{(dir + " ").ljust(w + 4, ".")} #{abb}" }
-      return "false"
+      return false
     end
     subs = args[1..-1].join("/")
     subs.empty? or d = Dir.glob("#{d}/#{subs}").first || "#{d}/#{subs}"
@@ -240,15 +266,46 @@ module Shortcuts
   end
 
   add :dc, "File diff with colors and paging", ->(*args) do
-    raise NotImplementedError, caller_locations(0)[0].to_s
+    page { |io| bash("diff -U5 --color=always #{args.shelljoin}", echo: io).ok? }
   end
 
   add :dns, "Test homer DNS server", ->(*args) do
-    raise NotImplementedError, caller_locations(0)[0].to_s
+    return false if bash(c(:at_home)).fail?
+    name = args[0] || "goo.gl"; hr = "_" * 80
+    page do |io|
+      for rec in %w[A AAAA]
+        for ipv, server in [%w[4 192.168.0.2], %w[6 2002:d1f0:3363:10:dea6:32ff:fe18:36db]]
+          for flag in %w[notcp tcp]
+            args = "#{name} #{rec} +#{flag} -#{ipv} @#{server}"
+            io.puts("\n#{hr}\n+ dig #{args}")
+            bash("dig #{args}", echo: io).ok? or return false
+          end
+        end
+      end
+    end
+    true
   end
 
   add :ds, "Create a new Docker container as a bg service", ->(*args) do
-    raise NotImplementedError, caller_locations(0)[0].to_s
+    print "\nName:  "; name  = $stdin.gets.chomp
+    print "\nImage: "; image = $stdin.gets.chomp
+    ports = []; envs = []
+    loop do
+      print "\nPort maps (HOST:CONTAINER[/udp], - when done): "; v = $stdin.gets.chomp
+      break if v == "-"
+      ports << v
+    end
+    loop do
+      print "\nEnv var (NAME='VALUE', - when done): "; v = $stdin.gets.chomp
+      break if v == "-"
+      envs << v
+    end
+    args = %W[docker run --log-driver local --log-opt max-size=2m --log-opt max-file=2
+      --detach --restart always --tty --name #{name}]
+    envs.each  { |v| args += %W[--env #{v}] }
+    ports.each { |v| args += %W[--publish #{v}] }
+    args << image
+    puts "\nRun: #{args.shelljoin}"; ask_continue("OK?", "yn") ? args.shelljoin : true
   end
 
   add :e, "Start the preferred editor if given an arg, otherwise just print the editor command", ->(*args) do
@@ -264,23 +321,22 @@ module Shortcuts
       else  false
       end
     end
-    if    ! found   then "false"
+    if    ! found   then false
     elsif args.any? then [found[:exe], found[:args], args.shelljoin].compact.join(" ")
-    else  "echo " + [found[:exe], found[:args_if_no_params]].compact.join(" ").shellescape
+    else  +"echo " << [found[:exe], found[:args_if_no_params]].compact.shelljoin
     end
   end
 
   add :ff, "Find paths matching regex", ->(*args) do
-    page { |io| Ffg::Cli.new(args, io: io).run } ? "true" : "false"
+    !! page { |io| Ffg::Cli.new(args, io: io).run }
   end
 
   add :fg, "Find regex in files", ->(*args) do
-    page { |io| Ffg::Cli.new(%w[--fg] + args, io: io).run } ? "true" : "false"
+    !! page { |io| Ffg::Cli.new(%w[--fg] + args, io: io).run }
   end
 
   add :gb, "Print current branch, or match first regex branch", ->(*args) do
-    re = nil; verbose = false
-    argi = -1
+    re = nil; verbose = false; argi = -1
     while (arg = args[argi += 1])
       if arg[0] == "-"
         ok = 0
@@ -298,16 +354,12 @@ module Shortcuts
     br = brs[0]
     return "echo #{br.shellescape}" if brs.size == 1 && br != "(no branch)" # Success iff got 1 match
     verbose and $stderr.puts "Branch regex '#{re}' did not match exactly once: #{brs.inspect}"
-    "false"
+    false
   end
 
   add :gcb, "Checkout first branch whose name matches given regex", ->(*args) do
     (re = args[0]) or raise "Regex is required."
-    if (branch = bash(c(:gb, "-v", re), :errs).line)
-      "git checkout #{branch.shellescape}"
-    else
-      "false"
-    end
+    (branch = bash(c(:gb, "-v", re), :errs).line) ? "git checkout #{branch.shellescape}" : false
   end
 
   add :gd, "Smarter git diff, includes stats for each file", ->(*args) do
@@ -340,7 +392,7 @@ module Shortcuts
         end
       end
     end
-    ok ? "true" : "false"
+    !! ok
   end
 
   add :gdb, "Delete branch matching regex, with confirmation", ->(*args) do
@@ -358,12 +410,12 @@ module Shortcuts
       end
     end
     usage.("Regex is required") if ! re
-    br = bash(c(:gb, "-v", re), :errs).line or return "false"
+    br = bash(c(:gb, "-v", re), :errs).line or return false
     cmds = [].tap { |cs| local or cs << "git push origin :#{br.shellescape}" }
     cmds << "git branch -D #{br.shellescape}" << "git fetch --prune"
-    ask_continue "Run: #{cmds.join(" && ")} ?", "yn" or (puts "Skipped."; return "false")
-    cmds.each { |cmd| puts "\n+ #{cmd}"; bash(cmd, :echo).ok? or return "false" }
-    "true"
+    ask_continue "Run: #{cmds.join(" && ")} ?", "yn" or (puts "Skipped."; return false)
+    cmds.each { |cmd| puts "\n+ #{cmd}"; bash(cmd, :echo).ok? or return false }
+    true
   end
 
   add :gg, "Git gui", ->(*args) do
@@ -382,48 +434,48 @@ module Shortcuts
         end
       end
     end
+    true
   end
 
   add :gmm, "Refresh and merge regex match of ARGV[0] or master/main down to current branch", ->(*args) do
-    this_br  = bash(c(:gb), :errs).line or return "false"
-    other_br = args[0] and (other_br = bash(c(:gb, "-v", other_br), :errs).line or return "false")
+    this_br  = bash(c(:gb), :errs).line or return false
+    other_br = args[0] and (other_br = bash(c(:gb, "-v", other_br), :errs).line or return false)
     other_br ||= bash(c(:gb, " master$")).line || bash(c(:gb, " main$")).line
-    other_br or (puts "Cannot find default branch."; return "false")
+    other_br or (puts "Cannot find default branch."; return false)
     puts "Merging #{other_br.inspect} down to #{this_br.inspect}..."
     ["git pull", "git checkout #{other_br.shellescape}", "git pull",
       "git checkout #{this_br.shellescape}",
       "git merge -X ignore-space-change #{other_br.shellescape}"
-    ].each { |cmd| puts "\n+ #{cmd}"; bash(cmd, :echo).ok? or return "false" }
-    "true"
+    ].each { |cmd| puts "\n+ #{cmd}"; bash(cmd, :echo).ok? or return false }
+    true
   end
 
   add :gmu, "Refresh and merge current branch up to regex match of ARGV[0] branch", ->(*args) do
-    other_br = args[0] or (puts "Upper branch name is required."; return "false")
-    other_br = bash(c(:gb, "-v", other_br), :errs).line or return "false"
-    this_br  = bash(c(:gb), :errs).line or return "false"
+    other_br = args[0] or (puts "Upper branch name is required."; return false)
+    other_br = bash(c(:gb, "-v", other_br), :errs).line or return false
+    this_br  = bash(c(:gb), :errs).line or return false
     puts "Merging #{this_br.inspect} up to #{other_br.inspect}..."
     ["git pull", "git checkout #{other_br.shellescape}", "git pull",
       "git merge -X ignore-space-change #{this_br.shellescape}"
-    ].each { |cmd| puts "\n+ #{cmd}"; bash(cmd, :echo).ok? or return "false" }
-    "true"
+    ].each { |cmd| puts "\n+ #{cmd}"; bash(cmd, :echo).ok? or return false }
+    true
   end
 
   add :gnb, "Create new branch named ARGV[0] off of regex match of ARGV[1] or current branch", ->(*args) do
-    new_br = args[0] or (puts "Usage: gnb NEW_BRANCH [BASE]"; return "false")
-    base = args[1] and (base = bash(c(:gb, "-v", base), :errs).line or return "false")
-    base ||= bash(c(:gb), :errs).line or return "false"
+    new_br = args[0] or (puts "Usage: gnb NEW_BRANCH [BASE]"; return false)
+    base = args[1] and (base = bash(c(:gb, "-v", base), :errs).line or return false)
+    base ||= bash(c(:gb), :errs).line or return false
     puts "Creating new branch #{new_br.inspect} based on #{base.inspect}..."
     ["git pull", "git checkout #{base.shellescape}", "git pull",
       "git checkout -b #{new_br.shellescape}",
       "git push -u origin HEAD"
-    ].each { |cmd| puts "\n+ #{cmd}"; bash(cmd, :echo).ok? or return "false" }
+    ].each { |cmd| puts "\n+ #{cmd}"; bash(cmd, :echo).ok? or return false }
     true
   end
 
   add :gs, "Smarter git status, handles git subdirs", ->(*args) do
     # NOTE: You may need to run "git config --global --bool status.relativePaths false" so paths are correct here
-    cwd = Dir.pwd; verbose = true; dirs = []
-    argi = -1
+    cwd = Dir.pwd; verbose = true; dirs = []; argi = -1
     while (arg = args[argi += 1])
       if arg[0] == "-"
         ok = 0
@@ -457,12 +509,11 @@ module Shortcuts
         end
       end
     end
-    "true"
+    true
   end
 
   add :gu, "Smarter git update, handles git subdirs", ->(*args) do
-    other_branch = nil; dirs = []
-    argi = -1
+    other_branch = nil; dirs = []; argi = -1
     while (arg = args[argi += 1])
       if arg[0] == "-"
         ok = 0
@@ -501,19 +552,25 @@ module Shortcuts
         end
       end
     end
-    "return #{retcode}"
+    retcode
   end
 
   add :h, "Dan's safe history wrapper", ->(*args) do
-    raise NotImplementedError, caller_locations(0)[0].to_s
+    if    args[0] =~ /^s/ then flags = %w[a];     msg = "History saved to '$HISTFILE'."
+    elsif args[0] =~ /^l/ then flags = %w[a c r]; msg = "History loaded from '$HISTFILE'."
+    else  $stderr.puts "Usage: h {s[ave]|l[oad]}"; return false
+    end
+    flags.map { |f| "history -#{f}" }.join(" && ") << " && echo #{msg.shellescape}"
   end
 
   add :hum, "Stop hum noise on the Alienware machine", ->(*args) do
-    raise NotImplementedError, caller_locations(0)[0].to_s
+    "echo 0 | #{c(:sudo, "tee", "/sys/module/snd_hda_intel/parameters/power_save")}"
   end
 
   add :jc, "Run journalctl our way", ->(*args) do
-    raise NotImplementedError, caller_locations(0)[0].to_s
+    args = args.empty? ? %w[--no-hostname -e -n7777] : %w[--no-hostname] + args
+    args = ["env", "SYSTEMD_PAGER=less", "SYSTEMD_LESS=FIJMRSWX --shift 8", "journalctl"] + args
+    c(:sudo, *args)
   end
 
   add :l, "Run ls the preferred way", ->(*args) do
@@ -521,23 +578,39 @@ module Shortcuts
   end
 
   add :lc, "Load predefined text into clipboard", ->(*args) do
-    raise NotImplementedError, caller_locations(0)[0].to_s
+    clips = {
+      "rb0" => <<~END
+        # frozen_string_literal: true
+        #
+        # Copyright 2024 Dan Higgins
+        # SPDX-License-Identifier: Apache-2.0
+
+      END
+    }
+    name = args[0]; clip = clips[name]
+    clip or (puts("Usage: CLIP_NAME\nWhere: CLIP_NAME <= #{clips.keys.sort}"); return false)
+    "xclip -in -rmlastnl -selection clipboard <<< #{clip.shellescape}" \
+      " && echo " + "Loaded clip: #{name.inspect}".shellescape
   end
 
   add :m, "Run 'more' style viewer the preferred way", ->(*args) do
     "less -FIJMRSWX -#8 -x4 #{args.shelljoin}"
   end
 
-  add :mapfile, "A custom `mapfile` to work in a standard way", ->(*args) do
-    raise NotImplementedError, caller_locations(0)[0].to_s
-  end
-
   add :mi, "Probe media info", ->(*args) do
-    raise NotImplementedError, caller_locations(0)[0].to_s
+    ok = true
+    page do |io|
+      script = "ffprobe -loglevel quiet -print_format json -show_format -show_streams -show_chapters "
+      for file in args
+        io.puts "\n+ #{file.inspect}"
+        ok &= bash(script + file.shellescape, echo: io).ok?
+      end
+    end
+    !! ok
   end
 
   add :need_screen, "Return success if on tty at home", ->(*args) do
-    raise NotImplementedError, caller_locations(0)[0].to_s
+    "#{c(:at_home)} && [[ ! $WINDIR && $USER == dan && $(tty) = /dev/tty[12] ]]"
   end
 
   add :need_x, "Return success if startx should be run", ->(*args) do
@@ -547,15 +620,20 @@ module Shortcuts
   end
 
   add :o, "Open files in their default viewer apps", ->(*args) do
-    args.any? or ($stderr.puts "No files given."; return "false")
-    bash(c(:x, "xdg-open")).ok? or ($stderr.puts "Not configured for file viewer in this env."; return "false")
+    args.any? or ($stderr.puts "No files given."; return false)
+    bash(c(:x, "xdg-open")).ok? or ($stderr.puts "Not configured for file viewer in this env."; return false)
     rans = args.map { |f| bash("xdg-open #{f.shellescape}") }
-    rans.all?(&:ok?) or ($stderr.puts rans.map(&:out).join("\n"); return "false")
-    "true"
+    rans.all?(&:ok?) or ($stderr.puts rans.map(&:out).join("\n"); return false)
+    true
   end
 
   add :pd, "Dan's smart pushd/popd wrapper", ->(*args) do
-    raise NotImplementedError, caller_locations(0)[0].to_s
+    s = args[0]; n = s&.to_i
+    if    s.empty?       then "dirs"
+    elsif s =~ /^-\d+$/  then "popd +#{-n - 1}"
+    elsif s =~ /^\+\d+$/ then "pushd +#{n - 1}"
+    else  "pushd #{s.shellescape}"
+    end
   end
 
   add :proot, "Detect path to parent dir containing named subdir.", ->(*args) do
@@ -569,23 +647,53 @@ module Shortcuts
   end
 
   add :ps1, "Generate fancy xterm* PS1 value", ->(*args) do
-    raise NotImplementedError, caller_locations(0)[0].to_s
+    labels   = %i[uname reset fbwhite fbgreen fbmagenta fbcyan fbyellow fbred]
+    col_args = labels[1, 7]; 6.step(1, -1).each { |idx| col_args.insert(idx, "\n") }
+    scr_args = [[:ps1_uname_wrap, "\\u"], [:cole, *col_args]]
+    script   = scr_args.reduce(+"") { |acc, args| acc << c(*args) << ";" }
+    map      = labels.zip(bash(script).lines).to_h
+    ps1 = +"`c ps1_last_rc_save`"                << # To show at the end
+      '\033]0;\u@\h:\w\007\033]2;\u@\h:\w\007'   << # Window title
+      "\\n#{map[:uname]}#{map[:fbwhite]}@"       \
+      "#{map[:fbgreen]}\\h#{map[:fbwhite]}:\\w"  \
+      " #{map[:fbmagenta]}$$ #{map[:fbcyan]}\\t" \
+      "#{map[:fbyellow]}`c ps1_git_details`"     \
+      "#{map[:fbred]}`c ps1_last_rc_show`#{map[:reset]}\\n\\$ "
+    "echo #{ps1.shellescape}"
   end
 
   add :ps1_git_details, "Display super abbreviated current git repo info", ->(*args) do
-    raise NotImplementedError, caller_locations(0)[0].to_s
+    bash(c(:x, "git")).ok? or return nil
+    branch = bash(c(:gb)).line or return nil
+    status = bash("git status").lines; bits = +""
+    bits << "!" if status.any? { _1.include?("modified:") }
+    bits << "x" if status.any? { _1.include?("deleted:") }
+    bits << "?" if status.any? { _1.include?("Untracked files") }
+    bits << "+" if status.any? { _1.include?("new file:") }
+    bits << "*" if status.any? { _1.include?("Your branch is ahead of") }
+    bits << ">" if status.any? { _1.include?("renamed:") }
+    bits.empty? or bits.insert(0, " ")
+    +"echo " << " [#{branch}#{bits}]".shellescape
   end
 
   add :ps1_last_rc_save, "Save the last command exit code in a shared place for later", ->(*args) do
-    raise NotImplementedError, caller_locations(0)[0].to_s
+    dir = %w[/dev/shm /tmp].detect { File.writable?(_1) } or return false
+    rc = ENV["THE_C_LAST_RC"] or return nil
+    !! File.write("#{dir}/ps1_last_rc_#{ENV["USER"]}", rc) rescue false
   end
 
   add :ps1_last_rc_show, "Display the last command exit code, saved before", ->(*args) do
-    raise NotImplementedError, caller_locations(0)[0].to_s
+    dir = %w[/dev/shm /tmp].detect { File.writable?(_1) } or return false
+    rc = (File.read("#{dir}/ps1_last_rc_#{ENV["USER"]}") rescue nil)
+    rc && rc == "0" ? nil : +"echo " << " #{rc}".shellescape
   end
 
   add :ps1_uname_wrap, "Wrap arg in red if root, otherwise green", ->(*args) do
-    raise NotImplementedError, caller_locations(0)[0].to_s
+    if ENV["USER"] == "root"
+      c(:cole, :fbred, :bblack, :blink, *args, :reset)
+    else
+      c(:cole, :fbgreen, *args)
+    end
   end
 
   add :psg, "Find processes", ->(*args) do
@@ -593,47 +701,82 @@ module Shortcuts
     lines = bash("ps -ewwH -o uid,pid,ppid,pgid,cmd").lines \
       .map.with_index { |ln, i| i == 0 || regex.match?(ln) ? ln : nil }.compact
     page("+G") { |io| io.puts lines.join } # Use page for large text
-    lines.size > 1 ? "true" : "false"
+    lines.size > 1
   end
 
   add :psync, "Sync abs pathnames from current / to matched ones below ROOT/ subdirs", ->(*args) do
-    raise NotImplementedError, caller_locations(0)[0].to_s
+    roots = bash(c(:roots, "ROOT")).lines.map { "#{_1}/ROOT" }
+    roots.any? or ($stderr.puts "Abs paths to sync must be created below 'ROOT/' subdirs."; return 1)
+    page do |io|
+      for root in roots
+        io.puts "\n#{"_" * 80}\nProcess relative root: #{root.inspect}"
+        for path in strout { |sio| Ffg::Cli.new(root, io: sio).run }.split("\n").sort
+          apath = path[root.size .. -1]
+          File.exist?(apath)    or (io.puts "Warning: Not extant:\t#{apath}"; next)
+          File.readable?(apath) or (io.puts "Warning: Not readable:\t#{apath}"; next)
+          eapath, epath = [apath, path].map(&:shellescape)
+          bash("cmp -s #{eapath} #{epath}", echo: io).ok? and (io.puts "Unchanged:\t#{apath}"; next)
+          io.puts "Syncing:\t#{apath}"
+          io.puts '++ bash("cp #{eapath} #{epath}", echo: io).ok? or return 2'
+        end
+      end
+    end
+    true
   end
 
   add :rce, "Edit ~/code/bash/bashrc", ->(*args) do
-    raise NotImplementedError, caller_locations(0)[0].to_s
+    c(:e, "~/code/bash/bashrc")
   end
 
   add :rcp, "Propagate .bashrc to servers", ->(*args) do
-    raise NotImplementedError, caller_locations(0)[0].to_s
+    names = args[0] ? args : %w[
+      dan@homer:.bashrc pi@homer:.bashrc root@homer:.bashrc
+      dan@missybook:.bashrc root@missybook:.bashrc
+      dvr@dvr:dan.bashrc root@dvr:.bashrc
+    ]
+    ok = true
+    for name in names
+      name =~ /:/ or name = "#{name}:hig.bashrc"
+      print "#{name} ... "
+      name =~ /^!/ and (puts "skipped."; next)
+      ok &= bash("scp -q ~/.bashrc #{name}", :echo).ok? and puts "OK."
+    end
+    ok
   end
 
   add :rh, "Recursive sha256 hash", ->(*args) do
-    raise NotImplementedError, caller_locations(0)[0].to_s
+    paths = args[0] ? args : ["."]; cwd = Dir.pwd
+    for path in paths
+      if File.directory?(path)
+        Dir.chdir(path) rescue return false
+        find = "."; name = File.basename(Dir.pwd)
+      else
+        find = path; name = File.basename(path)
+      end
+      sum = bash("find #{find.shellescape} -type f | sort | xargs -d \\n cat | sha256sum -b", :errs).line
+      puts "#{sum[0, 64]} #{name}"
+      Dir.chdir(cwd)
+    end
+    true
   end
 
   add :rl, "Recursive listing of files or dirs, sortable by date or size or count", ->(*args) do
-    page { |io| RecursiveList.run(args, io: io) } ? "true" : "false"
+    !! page { |io| RecursiveList.run(args, io: io) }
   end
 
   add :roots, "Select roots of dir trees containing a named subdir", ->(*args) do
-    Roots.run(args) ? "true" : "false"
+    !! Roots.run(args)
   end
 
   add :sce, "Edit ~/.ssh/config", ->(*args) do
-    raise NotImplementedError, caller_locations(0)[0].to_s
+    c(:e, "~/.ssh/config")
   end
 
   add :scl, "List ~/.ssh/config defined hosts", ->(*args) do
-    raise NotImplementedError, caller_locations(0)[0].to_s
-  end
-
-  add :selfdoc, "Grep this file to gen online help; pass (beginRe, doLevels, sort)", ->(*args) do
-    raise NotImplementedError, caller_locations(0)[0].to_s
-  end
-
-  add :set_ruby, "Initializes the location of the `ruby` executable", ->(*args) do
-    raise NotImplementedError, caller_locations(0)[0].to_s
+    page do |io|
+      io.puts File.read("#{ENV["HOME"]}/.ssh/config").lines.grep(/^\s*Host\s/).sort.join
+    end
+    true
   end
 
   add :setpath, "Clever path manipulator, guarantees proper ordering and deduping", ->(*args) do
@@ -641,13 +784,13 @@ module Shortcuts
   end
 
   add :sudo, "Run sudo only if needed", ->(*args) do
-    bash("#{c(:x, "sudo")} && (( `id -u` != 0 ))").ok? and args = %w[sudo] + args
+    bash(c(:x, "sudo")).ok? && ENV["USER"] != "root" and args = %w[sudo] + args
     args.shelljoin
   end
 
   add :u, "Run system updater", ->(*args) do
     upd = %w[pacman yum apt apt-get].detect { bash(c(:x, _1)).ok? }
-    if    ! upd then $stderr.puts "No system updater found."; return "false"
+    if    ! upd then $stderr.puts "No system updater found."; return false
     elsif upd == "pacman" && args[0] == "c" then "checkupdates #{args[1..-1].shelljoin}"
     else  c(:sudo, upd, *args)
     end
@@ -672,15 +815,29 @@ module Shortcuts
         bash("pactree -rd#{depth} #{arg.shellescape}", echo: io)
       end
     end
-    "true"
+    true
   end
 
   add :vb, "View binary files", ->(*args) do
-    raise NotImplementedError, caller_locations(0)[0].to_s
+    args << "-" if args.empty?; ok = true
+    page do |io|
+      args.each { |file| ok &= bash("od -Ad -tx1z -w40 #{file.shellescape}", echo: io).ok? }
+    end
+    !! ok
   end
 
   add :x, "Are all given commands executable", ->(*args) do
-    args.all? { |c| bash("type #{c.shellescape}").ok? } ? "true" : "false"
+    args.all? { |c| bash("type #{c.shellescape}").ok? }
+  end
+
+  add :base, "Fallback base case if subcommand is unknown", ->(*args) do
+    tbl = { idxs: 0...3, dir: %w[.git .svn CVS], cmd: %w[git svn cvs] }
+    idx = tbl[:idxs].detect { |i| bash(c(:x, tbl[:cmd][i])).ok? && bash(c(:proot, tbl[:dir][i])).ok? }
+    if idx
+      bash("#{tbl[:cmd][idx]} #{args.shelljoin}", :echo).ok?
+    else
+      $stderr.puts "Base: Cannot determine if current dir is git, svn, or cvs. Aborting."; false
+    end
   end
 end # Shortcuts
 
@@ -1206,14 +1363,13 @@ module SetPath
 end # SetPath
 
 def main(args)
-  argi = -1
+  args[0] or args = ["-h"]; argi = -1
   while (arg = args[argi += 1])
     break if arg[0] != "-"
     ok = 0
-    arg =~ /^-[^-]*[h?]|^--help$/ && ok = 1 and return Shortcuts.list
+    arg =~ /^-[^-]*[h?]|^--help$/ && ok = 1 and (Shortcuts.list; return "false")
     raise "Invalid arg: #{arg.inspect}" if ok < 1
   end
-  return Shortcuts.list if ! arg
   Shortcuts.c(*args[argi..-1])
 end
 
@@ -1221,11 +1377,7 @@ begin
   result = main(ARGV)
 rescue Exception => e
   $stderr << "#{e.class}: #{e.message}\n" unless SystemExit === e && e.status == 0
-  result = false
+  result = "false"
 end
 
-if    String === result then $stdout << result
-elsif result.nil?       then $stdout << ":"
-elsif !! result         then $stdout << "true"
-else  $stdout << "false"
-end
+$stdout << result
