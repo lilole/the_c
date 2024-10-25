@@ -12,21 +12,23 @@ require "stringio"
 
 module Shortcuts
   ### Notes:
+    # o This file is the verbosely documented reference impl. To shorten your
+    #   bashrc drastically, and speed up its load times, feel free to remove doc
+    #   lines like these.
     # o Requires Ruby 3.1+.
     # o This is meant to be pasted into a bashrc as the body of a "c" function.
     #   For example:
     #     c() {
     #       if [[ ! ${THE_C_BODY:0:1} ]]; then
     #         THE_C_BODY=$(cat << '____END'
-    #           # ...this file...
+    #           # ...the_c.rb file...
     #     ____END
     #         )
     #       fi
     #       eval "$(ruby -e "$THE_C_BODY" -- "$@")"
     #     }
-    # o This file is the verbosely documented reference impl. To shorten your
-    #   bashrc drastically, and speed up its load times, feel free to remove doc
-    #   lines like these.
+    #     # ...somewhere outside the `c` function BEFORE it gets called...
+    #     export any_env_vars_the_Ruby_code_needs
     # o Defined Ruby shortcuts MUST return one of these standard types:
     #   - `nil`.......Reports a nop to the caller.
     #   - `String`....A bit of bash code to evaluate in the caller's context.
