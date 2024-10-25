@@ -14,7 +14,14 @@
 c() {
   THE_C_LAST_RC=$? # May be displayed in PS1
   if [[ ! ${THE_C_BODY:0:1} ]]; then
-    THE_C_BODY=$(cat << '____END'
+    THE_C_BODY=$(cut -c 5- << '____END'
+    # frozen_string_literal: true
+    #
+    # Copyright 2024 Dan Higgins
+    # SPDX-License-Identifier: Apache-2.0
+    #
+    # Every shell shortcut macro/script/tool in a single block of Ruby code.
+
     require "io/console"
     require "shellwords"
     require "stringio"
