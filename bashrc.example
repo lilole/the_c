@@ -9,8 +9,7 @@
 
 # Enable custom function wrapper.
 #
-THE_C="$HOME/.the_c.rb"
-cat > "$THE_C" << 'END_THE_C_BODY'
+THE_C_BODY=$(cat << 'END_THE_C_BODY'
 # frozen_string_literal: true
 #
 # Copyright 2024 Dan Higgins
@@ -2155,33 +2154,54 @@ end # TheC
 
 TheC.new(ARGV).start if $0 == __FILE__
 END_THE_C_BODY
+)
 
 ### Set up this bash instance and the Ruby background command service to
   # interface with each other from the `c` func.
   #
 the_c() {
-  case "$1" in
-    start)
-      local base="/tmp/$(basename "$THE_C")" i
-      ruby "$THE_C" "$base" $$ &
-      THE_C_PID=$!
-      THE_C_INPUT="${base}-i${THE_C_PID}"
-      THE_C_OUTPUT="${base}-o${THE_C_PID}"
-      trap 'the_c stop' EXIT
-      for i in `seq 30`; do [[ -e $THE_C_OUTPUT ]] && break || sleep 0.1; done
-    ;;
+  while [[ $1 ]]; do
+    case "$1" in
+      init)
+        local lock='/tmp/the_c.lock'
+        while [[ -e $lock ]]; do sleep 0.1; done
+        touch "$lock"
+        THE_C="$HOME/.the_c.rb"
+        if [[ -r $THE_C ]]; then
+          local sum1=$(md5sum <<< "$THE_C_BODY") sum2=$(md5sum < "$THE_C")
+          [[ $sum1 == $sum2 ]] && unset THE_C_BODY
+        fi
+        if [[ ${THE_C_BODY:0:1} ]]; then
+          cat > "$THE_C" <<< "$THE_C_BODY"
+          unset THE_C_BODY
+        fi
+        rm "$lock"
+      ;;
 
-    stop)
-      [[ $THE_C_PID ]] || return 1
-      local rc=0
-      kill "$THE_C_PID"; (( rc += $? ))
-      rm -f "$THE_C_INPUT" "$THE_C_OUTPUT"; (( rc += $? ))
-      unset THE_C_PID THE_C_INPUT THE_C_OUTPUT
-      (( rc == 0 )) || sleep 3
-    ;;
+      start)
+        [[ $THE_C && -r $THE_C ]] || { echo >&2 '+ the_c: Cannot start.'; return 1; }
+        local base="/tmp/$(basename "$THE_C")" i
+        ruby "$THE_C" "$base" $$ &
+        THE_C_PID=$!
+        THE_C_INPUT="${base}-i${THE_C_PID}"
+        THE_C_OUTPUT="${base}-o${THE_C_PID}"
+        trap 'the_c stop' EXIT
+        for i in `seq 30`; do [[ -e $THE_C_OUTPUT ]] && break || sleep 0.1; done
+      ;;
 
-    *) return 1 ;;
-  esac
+      stop)
+        [[ $THE_C_PID ]] || return 1
+        local rc=0
+        kill "$THE_C_PID"; (( rc += $? ))
+        rm -f "$THE_C_INPUT" "$THE_C_OUTPUT"; (( rc += $? ))
+        unset THE_C_PID THE_C_INPUT THE_C_OUTPUT
+        (( rc == 0 )) || sleep 3
+      ;;
+
+      *) return 1 ;;
+    esac
+    shift
+  done
 }
 
 ### The wrapper for all the Ruby shortcuts.
@@ -2215,7 +2235,7 @@ c() {
   eval "$result"
 }
 
-[[ $THE_C_PID ]] || the_c start
+[[ $THE_C_PID ]] || the_c init start
 
 # ________________
 # General env-vars
