@@ -2160,26 +2160,36 @@ END_THE_C_BODY
   # interface with each other from the `c` func.
   #
 the_c() {
-  while [[ $1 ]]; do
-    case "$1" in
-      start)
-        local base="/tmp/$(basename "$THE_C")" i
-        ruby "$THE_C" "$base" $$ &
-        THE_C_PID=$!
-        THE_C_INPUT="${base}-i${THE_C_PID}"
-        THE_C_OUTPUT="${base}-o${THE_C_PID}"
-        trap "kill ${THE_C_PID@Q}; rm -f ${THE_C_INPUT@Q} ${THE_C_OUTPUT@Q}" EXIT
-        for i in `seq 30`; do [[ -e $THE_C_OUTPUT ]] && break || sleep 0.1; done
-      ;;
-    esac
-    shift
-  done
+  case "$1" in
+    start)
+      local base="/tmp/$(basename "$THE_C")" i
+      ruby "$THE_C" "$base" $$ &
+      THE_C_PID=$!
+      THE_C_INPUT="${base}-i${THE_C_PID}"
+      THE_C_OUTPUT="${base}-o${THE_C_PID}"
+      trap 'the_c stop' EXIT
+      for i in `seq 30`; do [[ -e $THE_C_OUTPUT ]] && break || sleep 0.1; done
+    ;;
+
+    stop)
+      [[ $THE_C_PID ]] || return 1
+      local rc=0
+      kill "$THE_C_PID"; (( rc += $? ))
+      rm -f "$THE_C_INPUT" "$THE_C_OUTPUT"; (( rc += $? ))
+      unset THE_C_PID THE_C_INPUT THE_C_OUTPUT
+      (( rc == 0 )) || sleep 3
+    ;;
+
+    *) return 1 ;;
+  esac
 }
 
 ### The wrapper for all the Ruby shortcuts.
   #
 c() {
-  local last_rc=$? cmd0 cwd=$(pwd) # `last_rc` may be displayed in PS1
+  local last_rc=$? # Must be first; may be displayed in PS1
+  [[ $THE_C_PID ]] || { echo >&2 '++ the_c is not installed.'; return 1; }
+  local cmd0 cwd=$(pwd)
 
   # Add special context state to send to the bg service
   if [[ $cwd != $THE_C_LAST_DIR ]]; then
@@ -2279,5 +2289,5 @@ c at_home && export XZ_DEFAULTS='--threads=8 --verbose -9' # Faster xz compressi
 # _____________________________________________
 # Always at bottom: Start X or screen if needed
 
-#! c need_screen || exec screen -xRR
-! c need_x || exec startx
+#! c need_screen || { the_c stop; exec screen -xRR; }
+! c need_x || { the_c stop; exec startx; }
