@@ -189,13 +189,12 @@ module Util
       #
     def make_temp_file(body=nil, cleanup_secs=60)
       cache = (@make_temp_file_cache ||= {})
+      template = (cache[:template] ||= "#{fast_tmp_dir}/#{my_classname}-#{$$}-{{SEQ}}.tmp")
       cache[:seq] ||= 0
-      template_key = "template #{ENV["USER"]}".hash
-      cache[template_key] ||= "#{fast_tmp_dir}/#{my_classname}-#{ENV["USER"]}-{{SEQ}}.tmp"
 
       begin
         seq = (cache[:seq] += 1)
-        tmpfile = cache[template_key].dup.sub!("{{SEQ}}", seq.to_s)
+        tmpfile = template.sub("{{SEQ}}", seq.to_s)
       end while File.exist?(tmpfile)
 
       File.write(tmpfile, body) if body
@@ -322,7 +321,7 @@ module Helpers
     if run_done[]
       "#{pager} -F #{tmpfile.shellescape}" # `-F` = exit if 1 screen
     else
-      "tail -f -n 99K #{tmpfile.shellescape} | #{pager} -+F" # `-+F` = stay open
+      "tail -f -n 7K #{tmpfile.shellescape} | #{pager} -+F" # `-+F` = stay open
     end
   end
 
@@ -488,7 +487,7 @@ class Shortcuts
       width = map.values.map(&:size).max
       puterr "Valid abbrevs:"
       map.sort { |a, b| a[1] <=> b[1] }.each do |abbrev, dir|
-        dir = (dir + " ").ljust(width + 4, ".")
+        dir = "#{dir} ".ljust(width + 4, ".")
         puterr "  #{dir} #{abbrev}"
       end
       exit(1)
@@ -1099,13 +1098,13 @@ class Shortcuts
   end
 
   add :ps1_last_rc_save, "Save the last command exit code in a shared place for later", ->(*args) do
-    ps1_cache[:last_rc] = ENV["THE_C_LAST_RC"] || "0"
+    (rc = ENV["THE_C_LAST_RC"]) and ps1_cache[:last_rc] = rc
     nil
   end
 
   add :ps1_last_rc_show, "Display the last command exit code, saved before", ->(*args) do
-    rc = ps1_cache[:last_rc] || "0"
-    rc == "0" ? nil : "echo \\ #{rc}"
+    rc = ps1_cache[:last_rc]
+    (rc && rc != "0") ? "echo \\ #{rc}" : nil
   end
 
   add :ps1_uname_wrap, "Wrap arg in red if root, otherwise green", ->(*args) do
@@ -1197,8 +1196,8 @@ class Shortcuts
 
     ok = true
     names.each do |name|
-      label = "#{name} ".ljust(width + 1, ".")
-      print "#{label}... "
+      label = "#{name} ".ljust(width + 4, ".")
+      print "#{label} "
 
       if name[0] == "!"
         puts "skipped."
@@ -2111,7 +2110,7 @@ class TheC
       end
     rescue Exception => e
       return if SystemExit === e
-      return if SignalException === e && e.signo == 15 # TERM
+      return if SignalException === e && e.signo == 15 # SIGTERM
       info = e.backtrace&.[](0)
       puterr "++ event_loop: Restarting after #{e.class}: #{e.message}: #{info}"
       sleep 1
@@ -2163,9 +2162,7 @@ the_c() {
   while [[ $1 ]]; do
     case "$1" in
       init)
-        local lock='/tmp/the_c.lock'
-        while [[ -e $lock ]]; do sleep 0.1; done
-        touch "$lock"
+        the_c lock_on
         THE_C="$HOME/.the_c.rb"
         if [[ -r $THE_C ]]; then
           local sum1=$(md5sum <<< "$THE_C_BODY") sum2=$(md5sum < "$THE_C")
@@ -2175,13 +2172,13 @@ the_c() {
           cat > "$THE_C" <<< "$THE_C_BODY"
           unset THE_C_BODY
         fi
-        rm "$lock"
+        the_c lock_off
       ;;
 
       start)
         [[ $THE_C && -r $THE_C ]] || { echo >&2 '+ the_c: Cannot start.'; return 1; }
         local base="/tmp/$(basename "$THE_C")" i
-        ruby "$THE_C" "$base" $$ &
+        ruby "$THE_C" "$base" $$ < /dev/null &
         THE_C_PID=$!
         THE_C_INPUT="${base}-i${THE_C_PID}"
         THE_C_OUTPUT="${base}-o${THE_C_PID}"
@@ -2198,6 +2195,29 @@ the_c() {
         (( rc == 0 )) || sleep 3
       ;;
 
+      status)
+        {
+          echo -e '\nProcesses:'; c psg '\b(pts/\d+|bash|the_c)\b'
+          echo -e '\nPipes:';     c l -t /tmp/.the_c*
+          echo -e '\nTmpFiles:';  c l -t "$(the_c fast_tmp_dir)"/Shortcuts-*
+        } 2>&1 | c m
+      ;;
+
+      lock_on)
+        [[ $THE_C_LOCK ]] || THE_C_LOCK="$(the_c fast_tmp_dir)/the_c-$$.lock"
+        while ! mkdir "$THE_C_LOCK" &> /dev/null; do sleep 0.1; done
+      ;;
+
+      lock_off)
+        rmdir "$THE_C_LOCK"
+      ;;
+
+      fast_tmp_dir)
+        if   [[ -w /dev/shm ]]; then echo /dev/shm
+        else echo /tmp
+        fi
+      ;;
+
       *) return 1 ;;
     esac
     shift
@@ -2209,27 +2229,26 @@ the_c() {
 c() {
   local last_rc=$? # Must be first; may be displayed in PS1
   [[ $THE_C_PID ]] || { echo >&2 '++ the_c is not installed.'; return 1; }
-  local cmd0 cwd=$(pwd)
 
   # Add special context state to send to the bg service
+  local cmd0 cwd=$(pwd)
+  cmd0="ENV[\"THE_C_LAST_RC\"] = \"$last_rc\";" # For some reason this can't be cached in a global
   if [[ $cwd != $THE_C_LAST_DIR ]]; then
     THE_C_LAST_DIR="$cwd"
     cmd0="${cmd0}Dir.chdir(\"$cwd\");"
   fi
-  if [[ $last_rc != $THE_C_LAST_RC ]]; then
-    THE_C_LAST_RC="$last_rc"
-    cmd0="${cmd0}ENV[\"THE_C_LAST_RC\"] = \"$last_rc\";"
-  fi
 
   # Send the command to the bg service
   local -a cmd
-  [[ $cmd0 ]] && cmd+=("{{${cmd0}}}")
+  [[ ${cmd0:0:1} ]] && cmd+=("{{${cmd0}}}")
   cmd+=("$@")
+  the_c lock_on
   echo "${cmd[*]@Q}" > "$THE_C_INPUT"
 
   # Read the response from the bg service
   local result
   IFS='' read -r result < "$THE_C_OUTPUT"
+  the_c lock_off
 
   # Complete the bg service logic in this context
   eval "$result"
