@@ -177,13 +177,12 @@ module Util
       #
     def make_temp_file(body=nil, cleanup_secs=60)
       cache = (@make_temp_file_cache ||= {})
+      template = (cache[:template] ||= "#{fast_tmp_dir}/#{my_classname}-#{$$}-{{SEQ}}.tmp")
       cache[:seq] ||= 0
-      template_key = "template #{ENV["USER"]}".hash
-      cache[template_key] ||= "#{fast_tmp_dir}/#{my_classname}-#{ENV["USER"]}-{{SEQ}}.tmp"
 
       begin
         seq = (cache[:seq] += 1)
-        tmpfile = cache[template_key].dup.sub!("{{SEQ}}", seq.to_s)
+        tmpfile = template.sub("{{SEQ}}", seq.to_s)
       end while File.exist?(tmpfile)
 
       File.write(tmpfile, body) if body
@@ -310,7 +309,7 @@ module Helpers
     if run_done[]
       "#{pager} -F #{tmpfile.shellescape}" # `-F` = exit if 1 screen
     else
-      "tail -f -n 99K #{tmpfile.shellescape} | #{pager} -+F" # `-+F` = stay open
+      "tail -f -n 7K #{tmpfile.shellescape} | #{pager} -+F" # `-+F` = stay open
     end
   end
 
@@ -476,7 +475,7 @@ class Shortcuts
       width = map.values.map(&:size).max
       puterr "Valid abbrevs:"
       map.sort { |a, b| a[1] <=> b[1] }.each do |abbrev, dir|
-        dir = (dir + " ").ljust(width + 4, ".")
+        dir = "#{dir} ".ljust(width + 4, ".")
         puterr "  #{dir} #{abbrev}"
       end
       exit(1)
@@ -1087,13 +1086,13 @@ class Shortcuts
   end
 
   add :ps1_last_rc_save, "Save the last command exit code in a shared place for later", ->(*args) do
-    ps1_cache[:last_rc] = ENV["THE_C_LAST_RC"] || "0"
+    (rc = ENV["THE_C_LAST_RC"]) and ps1_cache[:last_rc] = rc
     nil
   end
 
   add :ps1_last_rc_show, "Display the last command exit code, saved before", ->(*args) do
-    rc = ps1_cache[:last_rc] || "0"
-    rc == "0" ? nil : "echo \\ #{rc}"
+    rc = ps1_cache[:last_rc]
+    (rc && rc != "0") ? "echo \\ #{rc}" : nil
   end
 
   add :ps1_uname_wrap, "Wrap arg in red if root, otherwise green", ->(*args) do
@@ -1185,8 +1184,8 @@ class Shortcuts
 
     ok = true
     names.each do |name|
-      label = "#{name} ".ljust(width + 1, ".")
-      print "#{label}... "
+      label = "#{name} ".ljust(width + 4, ".")
+      print "#{label} "
 
       if name[0] == "!"
         puts "skipped."
@@ -2099,7 +2098,7 @@ class TheC
       end
     rescue Exception => e
       return if SystemExit === e
-      return if SignalException === e && e.signo == 15 # TERM
+      return if SignalException === e && e.signo == 15 # SIGTERM
       info = e.backtrace&.[](0)
       puterr "++ event_loop: Restarting after #{e.class}: #{e.message}: #{info}"
       sleep 1
