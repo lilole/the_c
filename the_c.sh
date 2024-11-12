@@ -20,9 +20,10 @@ THE_C_BODY=$(cat << 'END_THE_C_BODY'
   # non-Bash source here, you can point directly to your own file below, with
   # these steps:
   #   1. Remove this block that sets `THE_C_BODY`.
-  #   2. Reduce the "init)" block below to a single line that sets `THE_C` to
-  #      the command service executable file's path.
-  #   3. If using your own custom command service:
+  #   2. Change `THE_C` assignment in `the_c()` below to your command service
+  #      executable file's path.
+  #   3. Reduce the "init)" block below to a nop, e.g. a single `:` command.
+  #   4. If using your own custom command service:
   #      a. Make sure the "start)" block runs your command, instead of
   #           ruby "$THE_C" ...
   #      b. If your custom service does not use input and output named pipes,
@@ -37,11 +38,12 @@ END_THE_C_BODY
   # interface with each other from the `c` func.
   #
 the_c() {
+  THE_C="$HOME/.the_c.rb"
+  local base="/tmp/$(basename "$THE_C")"
   while [[ $1 ]]; do
     case "$1" in
       init)
         the_c lock_on
-        THE_C="$HOME/.the_c.rb"
         if [[ -r $THE_C ]]; then
           local sum1=$(md5sum <<< "$THE_C_BODY") sum2=$(md5sum < "$THE_C")
           [[ $sum1 == $sum2 ]] && unset THE_C_BODY
@@ -55,13 +57,13 @@ the_c() {
 
       start)
         [[ $THE_C && -r $THE_C ]] || { echo >&2 '+ the_c: Cannot start.'; return 1; }
-        local base="/tmp/$(basename "$THE_C")" i
         ruby "$THE_C" "$base" $$ < /dev/null &
         THE_C_PID=$!
         THE_C_INPUT="${base}-i${THE_C_PID}"
         THE_C_OUTPUT="${base}-o${THE_C_PID}"
         trap 'the_c stop' EXIT
-        for i in `seq 30`; do [[ -e $THE_C_OUTPUT ]] && break || sleep 0.1; done
+        local t=30; while [[ ! -e $THE_C_OUTPUT ]]; do (( --t < 1 )) && break; sleep 0.1; done
+        (( t > 0 )) || { echo >&2 '+ the_c: Did not start.'; the_c stop; return 1; }
       ;;
 
       stop)
@@ -76,7 +78,7 @@ the_c() {
       status)
         {
           echo -e '\nProcesses:'; c psg '\b(pts/\d+|bash|the_c)\b'
-          echo -e '\nPipes:';     c l -t /tmp/.the_c*
+          echo -e '\nPipes:';     c l -t "$base"*
           echo -e '\nTmpFiles:';  c l -t "$(the_c fast_tmp_dir)"/Shortcuts-*
         } 2>&1 | c m
       ;;
@@ -106,7 +108,7 @@ the_c() {
   #
 c() {
   local last_rc=$? # Must be first; may be displayed in PS1
-  [[ $THE_C_PID ]] || { echo >&2 '++ the_c is not installed.'; return 1; }
+  [[ $THE_C_PID ]] || { echo >&2 '++ the_c is not running.'; return 1; }
 
   # Add special context state to send to the bg service
   local cmd0 cwd=$(pwd)
