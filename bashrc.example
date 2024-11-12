@@ -259,6 +259,18 @@ module Helpers
     safe_result(status)
   end
 
+  ### Shorthand to combine calling `bash()` with result of `c()`.
+    # The end of the args may be `:echo` or `:errs` to match the same options
+    # supported by `bash()`.
+    #
+  def cc(*args, **bash_opts2)
+    bash_opts = []
+    while %i[echo errs].member?(args.last)
+      bash_opts << args.pop
+    end
+    bash(c(*args), *bash_opts, **bash_opts2)
+  end
+
   ### Extract and eval special args sent from the `c` Bash function, formatted
     # like `{{ <ruby_code> }}`. This is needed for things like the current dir
     # and exitcode of the last command that ran.
@@ -348,9 +360,9 @@ module Helpers
     #
   def find_git_workspaces(dirs)
     dirs.map do |dir|
-      root = bash(c(:proot, ".git", dir)).line # Search up tree
+      root = cc(:proot, ".git", dir).line # Search up tree
       if root.nil?
-        roots = bash(c(:roots, ".git", dir)).lines # Search down tree
+        roots = cc(:roots, ".git", dir).lines # Search down tree
         raise "Cannot find any git workspaces: #{dir.inspect}." if roots.empty?
       else
         roots = [root]
@@ -396,6 +408,72 @@ module Helpers
     temp = make_temp_file(code)
     "$(ruby #{temp.shellescape})"
   end
+
+  ### Map certain keywords to ANSI color escape sequences.
+    #
+  def color_escape(words)
+    @color_escape ||= begin
+      {
+        fblack:   30, fred:       31, fgreen:   32, fyellow:   33,
+        fblue:    34, fmagenta:   35, fcyan:    36, fwhite:    37,
+        fbblack:  90, fbred:      91, fbgreen:  92, fbyellow:  93,
+        fbblue:   94, fbmagenta:  95, fbcyan:   96, fbwhite:   97,
+        bblack:   40, bred:       41, bgreen:   42, byellow:   43,
+        bblue:    44, bmagenta:   45, bcyan:    46, bwhite:    47,
+        bbblack: 100, bbred:     101, bbgreen: 102, bbyellow: 103,
+        bbblue:  104, bbmagenta: 105, bbcyan:  106, bbwhite:  107,
+        blink:     5, nblink:     25, reset:     0
+      }.map { |k, v| [k.to_s, v.to_s] }.to_h
+    end
+
+    words.map do |word|
+      word = word.to_s
+      (code = @color_escape[word]) ? "\e[#{code}m" : word
+    end.join
+  end
+
+  ### Colorize all matches of a regex.
+    #
+  def color_matches(text, regex, cole_name)
+    cole = color_escape([cole_name])
+    regex = /^/ if regex.source == "."
+    text.gsub(regex, "#{cole}\\0#{color_escape(["reset"])}")
+  end
+
+  ### Single SOT for our standard options for `less`.
+    #
+  def less_opts = @less_opts ||= "-FIJMRSWX#8 --status-col-width=1"
+
+  ### State information for the PS1-related shortcuts.
+    #
+  class Ps1Helper
+    attr_accessor :last_rc, :ps1, :x_git
+    attr_reader   :context, :last_user
+
+    def initialize(context)
+      @context = context
+    end
+
+    def check_last_user
+      return if last_user == ENV["USER"]
+      @last_user = ENV["USER"]
+      # Invalidate all attrs that relate to current user
+      @ps1 = nil
+    end
+
+    def uname_wrap
+      # This will be cached in the `ps1` shortcut
+      if ENV["USER"] == "root"
+        context.color_escape(%w[fbred bblack blink \\u nblink])
+      else
+        context.color_escape(%w[fbgreen \\u])
+      end
+    end
+  end # Ps1Helper
+
+  ### Single instance of PS1 state info.
+    #
+  def ps1_helper = @ps1_helper ||= Ps1Helper.new(self)
 end # Helpers
 
 class Shortcuts
@@ -413,23 +491,18 @@ class Shortcuts
     "bundle exec #{args.shelljoin}"
   end
 
-  add :cole, "Join given strings with xterm color seqs", ->(*args) do
-    # We cache everything here because this may be called for PS1
-    cache = (@cole_cache ||= {})
-    cache[:map] ||= {
-      "fblack"  =>  30, "fred"      =>  31, "fgreen"  =>  32, "fyellow"  =>  33,
-      "fblue"   =>  34, "fmagenta"  =>  35, "fcyan"   =>  36, "fwhite"   =>  37,
-      "fbblack" =>  90, "fbred"     =>  91, "fbgreen" =>  92, "fbyellow" =>  93,
-      "fbblue"  =>  94, "fbmagenta" =>  95, "fbcyan"  =>  96, "fbwhite"  =>  97,
-      "bblack"  =>  40, "bred"      =>  41, "bgreen"  =>  42, "byellow"  =>  43,
-      "bblue"   =>  44, "bmagenta"  =>  45, "bcyan"   =>  46, "bwhite"   =>  47,
-      "bbblack" => 100, "bbred"     => 101, "bbgreen" => 102, "bbyellow" => 103,
-      "bbblue"  => 104, "bbmagenta" => 105, "bbcyan"  => 106, "bbwhite"  => 107,
-      "blink"   =>   5, "nblink"    =>  25, "reset"   =>   0
-    }
+  add :cole, "Join given strings with ANSI color seqs", ->(*args) do
+    if args.empty?
+      usage = <<~END
+        Usage:
+          cole {CODE|STRING} ...
+        Where:
+          CODE => One of:
+              {{LIST}}
+          STRING => Not a CODE, any other String value to include.
+      END
 
-    cache[:usage] ||= -> do
-      keys  = cache[:map].keys
+      keys  = @color_escape.keys
       width = keys.map(&:size).max
       list  = begin
         keys.each_slice(4).map do |codes|
@@ -440,31 +513,11 @@ class Shortcuts
         end.join(",\n" + " " * 6)
       end
 
-      puterr(<<~END, nolf: true)
-        Usage:
-          cole [:raw] {STRING|CODE} ...
-        Where:
-          :raw => Only for calls from Ruby code. This Symbol makes the output the raw string, not bash code.
-          CODE => One of:
-              #{list}
-          STRING => Not a CODE, any other String value to include.
-      END
+      puterr(usage.sub("{{LIST}}", list), nolf: true)
       exit(1)
     end
 
-    cache[:usage][] if args.empty?
-
-    raw = false
-    string = begin
-      args.map do |arg|
-        if    arg == :raw                 then raw = true; ""
-        elsif (v = cache[:map][arg.to_s]) then "\e[#{v}m"
-        else  arg
-        end
-      end.join
-    end
-
-    raw ? string : "echo #{string.shellescape}"
+    "echo #{color_escape(args).shellescape}"
   end
 
   add :d, "Change dirs with various abbreviations", ->(*args) do
@@ -511,7 +564,7 @@ class Shortcuts
   end
 
   add :dns, "Test homer DNS server", ->(*args) do
-    return false if bash(c(:at_home)).fail?
+    return false if cc(:at_home).fail?
 
     name = args[0] || "goo.gl"
     hr = "_" * 80
@@ -568,7 +621,7 @@ class Shortcuts
     ]
     found = editors.detect do |tup|
       if    args.none? && tup[:skip_if_no_params] then false
-      elsif bash(c(:x, tup[:exe])).ok?            then true
+      elsif cc(:x, tup[:exe]).ok?                 then true
       else  false
       end
     end
@@ -614,7 +667,7 @@ class Shortcuts
 
   add :gcb, "Checkout first branch whose name matches given regex", ->(*args) do
     (re = args[0]) or raise "Regex is required."
-    if (branch = bash(c(:gb, "-v", re), :errs).line)
+    if (branch = cc(:gb, "-v", re, :errs).line)
       "git checkout #{branch.shellescape}"
     else
       false
@@ -675,7 +728,7 @@ class Shortcuts
       end
       usage["Regex is required"] if ! re
 
-      br = bash(c(:gb, "-v", re), :errs).line or return false
+      br = cc(:gb, "-v", re, :errs).line or return false
       cmds = []
       cmds << "git push origin :#{br.shellescape}" if ! local
       cmds << "git branch -D #{br.shellescape}"
@@ -718,14 +771,14 @@ class Shortcuts
   end
 
   add :gmm, "Refresh and merge regex match of ARGV[0] or master/main down to current branch", ->(*args) do
-    this_br = bash(c(:gb, "-v"), :errs).line
+    this_br = cc(:gb, "-v", :errs).line
     return false if ! this_br
 
     if (other_br = args[0])
-      other_br = bash(c(:gb, "-v", other_br), :errs).line
+      other_br = cc(:gb, "-v", other_br, :errs).line
       return false if ! other_br
     else
-      other_br = bash(c(:gb, "-v", " (master|main)$")).line
+      other_br = cc(:gb, "-v", " (master|main)$").line
       if ! other_br
         puts "Cannot find default branch."
         return false
@@ -751,10 +804,10 @@ class Shortcuts
       return false
     end
 
-    other_br = bash(c(:gb, "-v", other_br), :errs).line
+    other_br = cc(:gb, "-v", other_br, :errs).line
     return false if ! other_br
 
-    this_br = bash(c(:gb, "-v"), :errs).line
+    this_br = cc(:gb, "-v", :errs).line
     return false if ! this_br
 
     puts "Merging #{this_br.inspect} up to #{other_br.inspect}..."
@@ -776,10 +829,10 @@ class Shortcuts
     end
 
     if (base = args[1])
-      base = bash(c(:gb, "-v", base), :errs).line
+      base = cc(:gb, "-v", base, :errs).line
       return false if ! base
     else
-      base = bash(c(:gb, "-v", " (master|main)$"), :errs).line
+      base = cc(:gb, "-v", " (master|main)$").line
       if ! base
         puts "Cannot find default branch."
         return false
@@ -868,7 +921,7 @@ class Shortcuts
         Dir.chdir(dir) do
           io << "\n#{dir}"
 
-          cur_branch = bash(c(:gb)).line
+          cur_branch = cc(:gb).line
           if ! cur_branch
             # Switch to master if no current branch is set
             ran = bash("git checkout master || git checkout main")
@@ -876,7 +929,7 @@ class Shortcuts
               io << "\n\n" << ran.out << "\nSkipping #{dir.inspect}.\n"
               next
             end
-            cur_branch = bash(c(:gb)).line
+            cur_branch = cc(:gb).line
           end
           io << " [#{cur_branch}]"
 
@@ -929,7 +982,7 @@ class Shortcuts
   end
 
   add :l, "Run ls the preferred way", ->(*args) do
-    "ls -alF --block-size=\"'1\" --color=always #{args.shelljoin} 2>&1 | #{c(:m)}"
+    "ls -alF --block-size=\"'1\" --color=always #{args.shelljoin} 2>&1 | #{c :m}"
   end
 
   add :lc, "Load predefined text into clipboard", ->(*args) do
@@ -975,7 +1028,9 @@ class Shortcuts
       " && echo " + "Loaded clip: #{name.inspect}".shellescape
   end
 
-  def less_opts = @less_opts ||= "-FIJMRSWX#8 --status-col-width=1"
+  add :less_options, "The standard opts for `less`", ->(*args) do
+    "echo #{less_opts.shellescape}"
+  end
 
   add :m, "Run 'more' style viewer the preferred way", ->(*args) do
     "less #{less_opts} #{args.shelljoin}"
@@ -991,13 +1046,14 @@ class Shortcuts
     end
   end
 
-  add :need_screen, "Return success if on tty at home", ->(*args) do
-    "#{c :at_home} && #{c :x, "screen"} && [[ ! $WINDIR && $USER == dan && $(tty) = /dev/tty[12] ]]"
+  add :need_screen, "Return success if on a tty at home", ->(*args) do
+    "#{c :at_home} && #{c :x, "screen"}" \
+      " && [[ ! $WINDIR && $USER == dan && $(tty) == /dev/tty[12] ]]"
   end
 
   add :need_x, "Return success if startx should be run", ->(*args) do
-    "[[ ! $WINDIR && $USER == dan && $(tty) == /dev/tty1 ]]" \
-      " && ( #{c :at_home} || #{c :at_work} )" \
+    "(#{c :at_home} || #{c :at_work})" \
+      " && [[ ! $WINDIR && $USER == dan && $(tty) == /dev/tty1 ]]" \
       " && ! pgrep '^X(org)?$' &> /dev/null"
   end
 
@@ -1007,7 +1063,7 @@ class Shortcuts
       return false
     end
 
-    if bash(c(:x, "xdg-open")).fail?
+    if cc(:x, "xdg-open").fail?
       puterr "Not configured for file viewer in this env."
       return false
     end
@@ -1043,18 +1099,9 @@ class Shortcuts
     "echo #{parent.shellescape}"
   end
 
-  def ps1_cache = @ps1_cache ||= {}
-
-  def ps1_cache_check_user
-    return if ps1_cache[:last_user] == ENV["USER"]
-    ps1_cache[:last_user] = ENV["USER"]
-    # Invalidate all keys that relate to current user
-    ps1_cache[:ps1] = nil
-  end
-
   add :ps1, "Generate fancy xterm PS1 value", ->(*args) do
-    ps1_cache_check_user
-    ps1_cache[:ps1] ||= begin
+    ps1_helper.check_last_user
+    ps1_helper.ps1 ||= begin
       # Set the full PS1 contents here.
       # Line 1 saves the last command's rc value to show at the end.
       # Line 2 sets window title.
@@ -1068,23 +1115,22 @@ class Shortcuts
         '\n\$ '
       end
 
-      s = {}
-      %i[blink fbcyan fbgreen fbmagenta fbred fbwhite fbyellow nblink reset].each do |label|
-        s[label.to_s] = c(:cole, :raw, label)
+      subs = { "uname" => ps1_helper.uname_wrap }
+      %w[blink fbcyan fbgreen fbmagenta fbred fbwhite fbyellow nblink reset].each do |label|
+        subs[label] = color_escape([label])
       end
-      s["uname"] = c(:ps1_uname_wrap)
 
-      ps1 = template.gsub(/\{\{\w+\}\}/) { |str| s[str[2..-3]] }
+      ps1 = template.gsub(/\{\{\w+\}\}/) { |str| subs[str[2..-3]] }
 
       "echo #{ps1.shellescape}"
     end
   end
 
   add :ps1_git_details, "Display super abbreviated current git repo info", ->(*args) do
-    ps1_cache[:x_git] = bash(c(:x, "git")).ok? if ps1_cache[:x_git].nil?
-    ps1_cache[:x_git] or return nil
+    ps1_helper.x_git = cc(:x, "git").ok? if ps1_helper.x_git.nil?
+    ps1_helper.x_git or return nil
 
-    branch = bash(c(:gb)).line or return nil
+    branch = cc(:gb).line or return nil
     status = bash("git status").lines
     bits = +""
     bits << "!" if status.any? { _1.include?("modified:") }
@@ -1098,28 +1144,13 @@ class Shortcuts
   end
 
   add :ps1_last_rc_save, "Save the last command exit code in a shared place for later", ->(*args) do
-    (rc = ENV["THE_C_LAST_RC"]) and ps1_cache[:last_rc] = rc
+    (rc = ENV["THE_C_LAST_RC"]) and ps1_helper.last_rc = rc
     nil
   end
 
   add :ps1_last_rc_show, "Display the last command exit code, saved before", ->(*args) do
-    rc = ps1_cache[:last_rc]
+    rc = ps1_helper.last_rc
     (rc && rc != "0") ? "echo \\ #{rc}" : nil
-  end
-
-  add :ps1_uname_wrap, "Wrap arg in red if root, otherwise green", ->(*args) do
-    # This is already cached in the `ps1` value
-    if ENV["USER"] == "root"
-      c(:cole, :raw, :fbred, :bblack, :blink, '\u', :reset)
-    else
-      c(:cole, :raw, :fbgreen, '\u')
-    end
-  end
-
-  def color_matches(text, regex, cole_name)
-    cole = c(:cole, :raw, cole_name)
-    regex = /^/ if regex.source == "."
-    text.gsub(regex, "#{cole}\\0#{c :cole, :raw, :reset}")
   end
 
   add :psg, "Find processes", ->(*args) do
@@ -1128,7 +1159,7 @@ class Shortcuts
       bash("ps -ewwH -o sid,pgid,ppid,pid,uid,tty,stat,cmd").lines
         .map.with_index do |ln, i|
           if i == 0
-            c :cole, :raw, :fbgreen, ln, :reset
+            color_escape(%W[fbgreen #{ln} reset])
           elsif regex.match?(ln)
             color_matches(ln, regex, "fbyellow")
           else
@@ -1140,7 +1171,7 @@ class Shortcuts
   end
 
   add :psync, "Sync abs pathnames from current / to matched ones below ROOT/ subdirs", ->(*args) do
-    roots = bash(c(:roots, "ROOT")).lines.map { "#{_1}/ROOT" }
+    roots = cc(:roots, "ROOT").lines.map { "#{_1}/ROOT" }
     if roots.empty?
       puterr "Abs paths to sync must be created below 'ROOT/' subdirs."
       return false
@@ -1172,6 +1203,7 @@ class Shortcuts
           bash("cp #{eapath} #{epath}", errs: io).ok? or return false
         end
       end
+      true
     end
   end
 
@@ -1214,6 +1246,7 @@ class Shortcuts
   add :rh, "Recursive sha256 hash", ->(*args) do
     cwd = Dir.pwd
     paths = args.any? ? args : [cwd]
+    width = paths.map { File.basename(_1).size }.max
 
     paths.each do |path|
       if File.directory?(path)
@@ -1225,8 +1258,9 @@ class Shortcuts
         puterr "Skipping: Not a dir or file: #{path.inspect}"
         next
       end
+      print(File.basename(path).ljust(width + 1)); $stdout.flush
       sum = bash("find #{find.shellescape} -type f | sort | xargs -d '\\n' cat | sha256sum -b", :errs).line
-      puts "#{sum[0, 64]} #{File.basename(path)}" if sum
+      puts(sum ? sum[0, 64] : "")
       Dir.chdir(cwd)
     end
     true
@@ -1247,10 +1281,15 @@ class Shortcuts
   end
 
   add :scl, "List ~/.ssh/config defined hosts", ->(*args) do
-    page do |io|
-      matches = File.read("#{ENV["HOME"]}/.ssh/config").lines.grep(/^\s*Host\s/).sort
-      io.puts matches.join
+    matches = begin
+      File.read("#{ENV["HOME"]}/.ssh/config")
+        .lines
+        .grep(/^\s*Host\b/)
+        .map(&:lstrip)
+        .sort
     end
+
+    page { |io| io.puts matches.join }
   end
 
   add :setpath, "Clever path manipulator, guarantees proper ordering and deduping", ->(*args) do
@@ -1258,14 +1297,14 @@ class Shortcuts
   end
 
   add :sudo, "Run sudo only if needed", ->(*args) do
-    if bash(c(:x, "sudo")).ok? && ENV["USER"] != "root"
+    if cc(:x, "sudo").ok? && ENV["USER"] != "root"
       args = %w[sudo] + args
     end
     args.shelljoin
   end
 
   add :u, "Run system updater", ->(*args) do
-    @upd ||= %w[pacman yum apt apt-get].detect { bash(c(:x, _1)).ok? }
+    @upd ||= %w[pacman yum apt apt-get].detect { cc(:x, _1).ok? }
 
     if ! @upd
       puterr "No system updater found."
@@ -1300,7 +1339,7 @@ class Shortcuts
           depth = $~[1]
           next
         end
-        script = "#{c(:u, "-Si", arg)}; #{c(:u, "-Qi", arg)}"
+        script = "#{c :u, "-Si", arg}; #{c :u, "-Qi", arg}"
         out = bash(script).lines.map(&:rstrip).reject(&:empty?).uniq.join("\n")
         io.puts "\n#{out}"
         bash("pactree -rd#{depth} #{arg.shellescape}", echo: io)
@@ -1334,7 +1373,7 @@ class Shortcuts
       dir:  %w[.git .svn CVS]
     }
 
-    idx = tbl[:idxs].detect { |i| bash(c :x, tbl[:cmd][i]).ok? && bash(c :proot, tbl[:dir][i]).line }
+    idx = tbl[:idxs].detect { |i| cc(:x, tbl[:cmd][i]).ok? && cc(:proot, tbl[:dir][i]).line }
 
     if idx
       "#{tbl[:cmd][idx]} #{args.shelljoin}"
@@ -2159,11 +2198,12 @@ END_THE_C_BODY
   # interface with each other from the `c` func.
   #
 the_c() {
+  THE_C="$HOME/.the_c.rb"
+  local base="/tmp/$(basename "$THE_C")"
   while [[ $1 ]]; do
     case "$1" in
       init)
         the_c lock_on
-        THE_C="$HOME/.the_c.rb"
         if [[ -r $THE_C ]]; then
           local sum1=$(md5sum <<< "$THE_C_BODY") sum2=$(md5sum < "$THE_C")
           [[ $sum1 == $sum2 ]] && unset THE_C_BODY
@@ -2177,13 +2217,13 @@ the_c() {
 
       start)
         [[ $THE_C && -r $THE_C ]] || { echo >&2 '+ the_c: Cannot start.'; return 1; }
-        local base="/tmp/$(basename "$THE_C")" i
         ruby "$THE_C" "$base" $$ < /dev/null &
         THE_C_PID=$!
         THE_C_INPUT="${base}-i${THE_C_PID}"
         THE_C_OUTPUT="${base}-o${THE_C_PID}"
         trap 'the_c stop' EXIT
-        for i in `seq 30`; do [[ -e $THE_C_OUTPUT ]] && break || sleep 0.1; done
+        local t=30; while [[ ! -e $THE_C_OUTPUT ]]; do (( --t < 1 )) && break; sleep 0.1; done
+        (( t > 0 )) || { echo >&2 '+ the_c: Did not start.'; the_c stop; return 1; }
       ;;
 
       stop)
@@ -2198,7 +2238,7 @@ the_c() {
       status)
         {
           echo -e '\nProcesses:'; c psg '\b(pts/\d+|bash|the_c)\b'
-          echo -e '\nPipes:';     c l -t /tmp/.the_c*
+          echo -e '\nPipes:';     c l -t "$base"*
           echo -e '\nTmpFiles:';  c l -t "$(the_c fast_tmp_dir)"/Shortcuts-*
         } 2>&1 | c m
       ;;
@@ -2228,7 +2268,7 @@ the_c() {
   #
 c() {
   local last_rc=$? # Must be first; may be displayed in PS1
-  [[ $THE_C_PID ]] || { echo >&2 '++ the_c is not installed.'; return 1; }
+  [[ $THE_C_PID ]] || { echo >&2 '++ the_c is not running.'; return 1; }
 
   # Add special context state to send to the bg service
   local cmd0 cwd=$(pwd)
@@ -2261,10 +2301,10 @@ c() {
 
 export LANG=en_US.UTF-8
 export TZ=US/Central
-export LESS='-FIJMRSWX#8 --status-col-width=1'
-#export RUBYOPT='--enable=frozen-string-literal' # Before ruby might run
-export EDITOR="$(c e)"
+export LESS=$(c less_options)
+export EDITOR=$(c e)
 export VISUAL="$EDITOR"
+#export RUBYOPT='--enable=frozen-string-literal' # Before ruby might run
 
 HISTCONTROL=erasedups
 HISTSIZE=12000
