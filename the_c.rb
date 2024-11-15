@@ -110,11 +110,19 @@ module Util
       begin
         io_s, io_e, io_a = Array.new(3) { StringIO.new } # Capture stdout, stderr, stdout+stderr
         buff_s, buff_e = "".b, "".b # Buffers for stdout, stderr
-        lock = Mutex.new
+        stile = Mutex.new
 
         start  = -> { spawn(["bash", "#{my_classname}-bash"], "-c", script, out: pipw_s, err: pipw_e) }
         finish = ->(_) { pipw_s.close; pipw_e.close }
-        bufwrt = ->(buff, io) { io.write(buff); lock.synchronize { io_a.write(buff) } }
+
+        bufwrt = ->(buff, io) do
+          io.write(buff)
+          errs_to.write(buff) if errs_to && io == io_e
+          stile.synchronize do
+            io_a.write(buff)
+            echo_to.write(buff) if echo_to
+          end
+        end
 
         process  = Thread.new { Process::Status.wait(start[]).tap(&finish) }
         reader_s = Thread.new { bufwrt[buff_s, io_s] while pipr_s.read(256, buff_s) }
@@ -129,21 +137,17 @@ module Util
       @bash_result ||= Struct.new(:exitcode, :fail?, :line, :lines, :ok?, :okout, :out, :stderr, :stdout)
       @bash_result.new.tap do |result|
         ok = stat.success?
-        out_a = (io_a.rewind; io_a.read.chomp)
-        out_s = (io_s.rewind; io_s.read.chomp)
-        out_e = (io_e.rewind; io_e.read.chomp)
-        echo_to.puts(out_a) if echo_to
-        errs_to.puts(out_a) if errs_to && ! ok
+        out = { a: io_a, s: io_s, e: io_e }.map { |k, io| io.rewind; [k, io.read.chomp] }.to_h
 
         result.send("fail?=", ! ok)
         result.send("ok?=",   ok)
         result.exitcode = stat.exitstatus
-        result.lines    = out_s.split("\n")
+        result.lines    = out[:s].split("\n")
         result.line     = result.lines.last # Maybe nil
-        result.okout    = ok ? out_a : nil
-        result.out      = out_a
-        result.stderr   = out_e
-        result.stdout   = out_s
+        result.okout    = ok ? out[:a] : nil
+        result.out      = out[:a]
+        result.stderr   = out[:e]
+        result.stdout   = out[:s]
       end
     end
 
@@ -874,7 +878,7 @@ class Shortcuts
             elsif ln =~ /^.+:$/ then category = ln.gsub(/\s+/, "-")
             elsif ln =~ /^Not currently on any branch/ then on_branch = "NONE"
             elsif ln =~ /^On branch (.+)/              then on_branch = $~[1]
-            elsif ln =~ /^Your branch is( ahead of \S+ by (\d+))/ then commits_ahead = ", #{$~[3]} to push"
+            elsif ln =~ /^Your branch is ahead of \S+ by (\d+)/ then commits_ahead = ", #{$~[1]} to push"
             end
           end
 
@@ -2165,7 +2169,14 @@ class TheC
           check_cmd = `ps -o command= -p #{check_pid}`
           clean_it = ! check_cmd.start_with?(proctitle_base)
         end
-        File.delete(check_path) if clean_it
+        if clean_it
+          begin
+            File.delete(check_path)
+          rescue => e
+            next if Errno::ENOENT === e # Sometimes the pipe goes away after statting it
+            puterr "+ Delete #{check_path.inspect} failed: #{e.class}: #{e.message}"
+          end
+        end
       end
     end
   end
