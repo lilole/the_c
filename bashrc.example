@@ -1,11 +1,13 @@
 # Dan's Linux .bashrc.
 # This file is sourced by bash for non-login interactive shells.
 
-# If not running interactively, without a `--forcerc` arg, don't do anything
-[[ $- != *i* && $1 != --forcerc ]] && return
+# If not running interactively don't do anything
+[[ $- != *i* ]] && return
 
 # Source global definitions
-[[ -r /etc/bashrc ]] && . /etc/bashrc
+for f in bashrc bash.bashrc; do
+  [[ -r /etc/$f ]] && { . /etc/$f; break; }
+done; unset f
 
 # Enable custom function wrapper.
 #
@@ -2209,69 +2211,88 @@ END_THE_C_BODY
   # interface with each other from the `c` func.
   #
 the_c() {
-  THE_C="$HOME/.the_c.rb"
-  local base="/tmp/$(basename "$THE_C")"
+  declare -gA THE_C
   while [[ $1 ]]; do
-    case "$1" in
+    local _sub_cmd="$1"; shift
+    case "$_sub_cmd" in
       init)
-        the_c lock_on
-        if [[ -r $THE_C ]]; then
-          local sum1=$(md5sum <<< "$THE_C_BODY") sum2=$(md5sum < "$THE_C")
+        [[ ${THE_C[path]} ]] || THE_C[path]="$HOME/.the_c.rb"
+        [[ ${THE_C[base]} ]] || THE_C[base]="/tmp/$(basename "${THE_C[path]}")"
+        THE_C[tmp]=$(for d in /dev/shm /tmp; do [[ -w $d ]] && { echo $d; break; }; done)
+        the_c assert tmp || return 2
+        THE_C[lock]="${THE_C[tmp]}/the_c-$$.lock"
+        the_c body
+      ;;
+
+      assert)
+        local attr attrs msg quiet=false
+        [[ $1 ]] && { attrs="$*"; set --; } || attrs='-q pid' # Must consume args
+        for attr in $attrs; do
+          [[ $attr == -q ]] && { quiet=true; continue; }
+          [[ ${THE_C[$attr]} ]] && continue
+          if ! $quiet; then
+            case "$attr" in
+              tmp)  msg='+ the_c: Cannot init: Cannot find tmp dir.' ;;
+              lock) msg='+ the_c: Call init first.' ;;
+              pid)  msg='+ the_c is not running.' ;;
+              *)    msg="+ the_c: Attribute '$attr' is not set." ;;
+            esac
+            echo >&2 "$msg"
+          fi
+          return 1
+        done
+      ;;
+
+      body)
+        the_c lock_on || return 2
+        if [[ -r ${THE_C[path]} ]]; then
+          local sum1=$(md5sum <<< "$THE_C_BODY") sum2=$(md5sum < "${THE_C[path]}")
           [[ $sum1 == $sum2 ]] && unset THE_C_BODY
         fi
         if [[ ${THE_C_BODY:0:1} ]]; then
-          cat > "$THE_C" <<< "$THE_C_BODY"
+          cat > "${THE_C[path]}" <<< "$THE_C_BODY"
           unset THE_C_BODY
         fi
         the_c lock_off
       ;;
 
       start)
-        [[ $THE_C && -r $THE_C ]] || { echo >&2 '+ the_c: Cannot start.'; return 1; }
-        ruby "$THE_C" "$base" $$ < /dev/null &
-        THE_C_PID=$!
-        THE_C_INPUT="${base}-i${THE_C_PID}"
-        THE_C_OUTPUT="${base}-o${THE_C_PID}"
+        the_c assert lock || return 2
+        ruby "${THE_C[path]}" "${THE_C[base]}" $$ < /dev/null & # Start the bg service
+        THE_C[pid]=$!
+        THE_C[input]="${THE_C[base]}-i${THE_C[pid]}"  # Must match named pipe in the service
+        THE_C[output]="${THE_C[base]}-o${THE_C[pid]}" # Must match named pipe in the service
         trap 'the_c stop' EXIT
-        local t=30; while [[ ! -e $THE_C_OUTPUT ]]; do (( --t < 1 )) && break; sleep 0.1; done
-        (( t > 0 )) || { echo >&2 '+ the_c: Did not start.'; the_c stop; return 1; }
+        local t=30; while [[ ! -e ${THE_C[output]} ]]; do (( --t < 1 )) && break; sleep 0.1; done
+        (( t > 0 )) || { echo >&2 '+ the_c: Did not start.'; the_c stop; return 2; }
       ;;
 
       stop)
-        [[ $THE_C_PID ]] || return 1
         local rc=0
-        kill "$THE_C_PID"; (( rc += $? ))
-        rm -f "$THE_C_INPUT" "$THE_C_OUTPUT"; (( rc += $? ))
-        unset THE_C_PID THE_C_INPUT THE_C_OUTPUT
+        the_c assert pid && kill "${THE_C[pid]}"   ; (( rc += $? ))
+        rm -f "${THE_C[input]}" "${THE_C[output]}" ; (( rc += $? ))
+        unset THE_C[pid] THE_C[input] THE_C[output]; (( rc += $? ))
         (( rc == 0 )) || sleep 3
       ;;
 
       status)
         {
-          echo -e '\nProcesses:'; c psg '\b(pts/\d+|bash|the_c)\b'
-          echo -e '\nPipes:';     c l -t "$base"*
-          echo -e '\nTmpFiles:';  c l -t "$(the_c fast_tmp_dir)"/Shortcuts-*
+          echo -e '\nProcesses:'; the_c assert pid; c psg '\b(pts/\d+|bash|the_c)\b'
+          echo -e '\nPipes:';     the_c assert base && c l -t "${THE_C[base]}"*
+          echo -e '\nTmpFiles:';  the_c assert tmp  && c l -t "${THE_C[tmp]}"/Shortcuts-*
         } 2>&1 | c m
       ;;
 
       lock_on)
-        [[ $THE_C_LOCK ]] || THE_C_LOCK="$(the_c fast_tmp_dir)/the_c-$$.lock"
-        while ! mkdir "$THE_C_LOCK" &> /dev/null; do sleep 0.1; done
+        the_c assert lock && while ! mkdir "${THE_C[lock]}" &> /dev/null; do sleep 0.1; done
       ;;
 
       lock_off)
-        rmdir "$THE_C_LOCK"
-      ;;
-
-      fast_tmp_dir)
-        if   [[ -w /dev/shm ]]; then echo /dev/shm
-        else echo /tmp
-        fi
+        the_c assert lock && rmdir "${THE_C[lock]}"
       ;;
 
       *) return 1 ;;
     esac
-    shift
   done
 }
 
@@ -2279,33 +2300,27 @@ the_c() {
   #
 c() {
   local last_rc=$? # Must be first; may be displayed in PS1
-  [[ $THE_C_PID ]] || { echo >&2 '++ the_c is not running.'; return 1; }
+  the_c assert pid || return 1
 
-  # Add special context state to send to the bg service
-  local cmd0 cwd=$(pwd)
-  cmd0="ENV[\"THE_C_LAST_RC\"] = \"$last_rc\";" # For some reason this can't be cached in a global
-  if [[ $cwd != $THE_C_LAST_DIR ]]; then
-    THE_C_LAST_DIR="$cwd"
-    cmd0="${cmd0}Dir.chdir(\"$cwd\");"
-  fi
-
-  # Send the command to the bg service
-  local -a cmd
-  [[ ${cmd0:0:1} ]] && cmd+=("{{${cmd0}}}")
-  cmd+=("$@")
+  # Send the command to the bg service.
+  # Note that caching `$last_rc` or `pwd` sometimes breaks here, so we always send them.
+  local -a cmd=(
+    "{{ENV[\"THE_C_LAST_RC\"]=\"$last_rc\";Dir.chdir(\"${PWD//\"/\\\"}\")}}"
+    "$@"
+  )
   the_c lock_on
-  echo "${cmd[*]@Q}" > "$THE_C_INPUT"
+  echo "${cmd[*]@Q}" > "${THE_C[input]}"
 
   # Read the response from the bg service
   local result
-  IFS='' read -r result < "$THE_C_OUTPUT"
+  IFS='' read -r result < "${THE_C[output]}"
   the_c lock_off
 
   # Complete the bg service logic in this context
   eval "$result"
 }
 
-[[ $THE_C_PID ]] || the_c init start
+the_c assert || the_c init start
 
 # ________________
 # General env-vars
