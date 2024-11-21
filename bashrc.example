@@ -187,33 +187,48 @@ module Util
       end
     end
 
-    ### Create a unique temp file with optional given body, and return its path.
-      # The temp file should be cleaned automatically after 1 minute, but that
-      # won't affect a command using it as long as it has opened the file within
-      # that time, before it is removed.
-      # If `cleanup_secs` < 1, then no cleanup will be done here.
+    ### Create a unique temp file with optional given body, and return an object
+      # with `write`, `path`, and `io` methods. Use the `write` method to add to
+      # the file. When done writing, use the `path` method to close and return
+      # the file's path. Use `io` for direct access to the open File object.
       #
-    def make_temp_file(body=nil, cleanup_secs=60)
-      cache = (@make_temp_file_cache ||= {})
-      template = (cache[:template] ||= "#{fast_tmp_dir}/#{my_classname}-#{$$}-{{SEQ}}.tmp")
-      cache[:seq] ||= 0
+      # A single thread in this process will monitor created tmp files and clean
+      # any that were touched 30+ mins ago, each minute, from any process.
+      #
+    def make_temp_file(body=nil)
+      cache = (@make_temp_file_cache ||= {}.tap do |result|
+        file_template = "#{fast_tmp_dir}/#{my_classname}-#{$$}-{{SEQ}}.tmp"
+        file_glob     = "#{fast_tmp_dir}/#{my_classname}-*.tmp"
+
+        result[:seq] = 0
+        result[:template] = file_template
+        result[:class] = Class.new do
+          attr_reader :io
+          def initialize(path) = (@io = File.open(path, "w"); File.chmod(0600, path); io.sync = true)
+          def write(data)      = io.write(data)
+          def path             = (io.close; io.path)
+        end
+        result[:cleaner] = Thread.new do
+          ttl = 30 * 60
+          loop do
+            now = Time.now
+            Dir.glob(file_glob).each do |file|
+              next if now < File.stat(file).mtime + ttl
+              File.delete(file) rescue nil
+            end
+            sleep 60
+          end
+        end
+      end)
 
       begin
         seq = (cache[:seq] += 1)
-        tmpfile = template.sub("{{SEQ}}", seq.to_s)
+        tmpfile = cache[:template].sub("{{SEQ}}", seq.to_s)
       end while File.exist?(tmpfile)
 
-      File.write(tmpfile, body) if body
-
-      # Try to keep our tmpfiles cleaned up
-      if cleanup_secs.to_i >= 1
-        Thread.new do
-          sleep cleanup_secs
-          File.delete(tmpfile) rescue nil
-        end
-      end
-
-      tmpfile
+      tmpobj = cache[:class].new(tmpfile)
+      tmpobj.write(body) if body
+      tmpobj
     end
   end # UtilClassAndInstanceMethods
 
@@ -315,14 +330,11 @@ module Helpers
 
     # Let the user code block run without waiting
     run = Thread.new do
-      File.open(tmpfile, "w") do |io|
-        begin
-          io.sync = true
-          yield(io)
-        rescue Exception => e
-          quiet = SystemExit === e
-          io << e.full_message if ! quiet
-        end
+      begin
+        yield(tmpfile.io)
+      rescue Exception => e
+        quiet = SystemExit === e
+        tmpfile.io << e.full_message if ! quiet
       end
     end
 
@@ -337,9 +349,10 @@ module Helpers
       # pager to not assume the file is completely written.
     pager = c(:m, *args)
     if run_done[]
-      "#{pager} -F #{tmpfile.shellescape}" # `-F` = exit if 1 screen
+      "#{pager} -F #{tmpfile.path.shellescape}" # `-F` = exit if 1 screen
     else
-      "tail -f -n 7K #{tmpfile.shellescape} | #{pager} -+F" # `-+F` = stay open
+      # To keep the file open use `.io.path` here, not `.path`
+      "tail -f -n 7K #{tmpfile.io.path.shellescape} | #{pager} -+F" # `-+F` = stay open
     end
   end
 
@@ -412,7 +425,7 @@ module Helpers
     END
 
     temp = make_temp_file(code)
-    "$(ruby #{temp.shellescape})"
+    "$(ruby #{temp.path.shellescape})"
   end
 
   ### Map certain keywords to ANSI color escape sequences.
