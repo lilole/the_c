@@ -715,20 +715,18 @@ class Shortcuts
           io.puts ""
           bash(cmd[path], echo: io)
         else # Dir
-          Dir.chdir(path) do
-            lines = bash("git diff --stat").lines
-            summary = lines.last
-            lines[0..-2].each do |line|
-              file = line.split[0]
-              if file.empty? || ! File.file?(file)
-                io.puts "Warning: Ignoring output word: #{file.inspect}"
-              else
-                io.puts ""
-                bash(cmd[file], echo: io)
-              end
+          lines = bash("git diff --stat #{path.shellescape}").lines
+          summary = lines.last
+          lines[0..-2].each do |line|
+            file = line.split[0]
+            if file.empty? || ! File.file?(file)
+              io.puts "Warning: Ignoring output word: #{file.inspect}"
+            else
+              io.puts ""
+              bash(cmd[file], echo: io)
             end
-            io.puts "\nDir: #{path.inspect}: #{summary}"
           end
+          io.puts "\nDir: #{path.inspect}: #{summary}"
         end
       end
     end
