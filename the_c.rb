@@ -2111,6 +2111,7 @@ module SetPath
       pos < 0 and dirs[pos, 1] = [dirs[pos]].concat(val_dirs)
       cur_path = dirs.uniq.join(":")
     end
+    ENV[var_name] = cur_path
     cmd = "#{var_name}=#{cur_path.shellescape}"
     quiet or $stderr << cmd << "\n"
     new_dirs.any? ? cmd : "true"
