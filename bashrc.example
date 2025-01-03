@@ -2125,6 +2125,7 @@ module SetPath
       pos < 0 and dirs[pos, 1] = [dirs[pos]].concat(val_dirs)
       cur_path = dirs.uniq.join(":")
     end
+    ENV[var_name] = cur_path
     cmd = "#{var_name}=#{cur_path.shellescape}"
     quiet or $stderr << cmd << "\n"
     new_dirs.any? ? cmd : "true"
@@ -2372,12 +2373,10 @@ done; unset a
 # General shortcut aliases
 c x journalctl && alias jc='c jc'
 c x uys        && alias pcc='uys pcc'
-c x pikaur     && alias ua='c ua'
 c x systemctl  && alias sc='c sudo systemctl'
-c x xclip      && alias lc='c lc'
+c x pikaur     && alias ua='c ua'
 if c x docker; then
   alias d='docker'
-  alias dr='d run --rm --name dr$$ -it'
   alias dc='docker-compose'
   alias dcb='dc up --build --no-start'
   alias dcbr='dc up --build --detach'
@@ -2385,6 +2384,11 @@ if c x docker; then
   alias dcl='dc logs --timestamps --follow --tail=333'
   alias dcp='dc ps'
   alias dcr='dc run -e LINES=$LINES -e COLUMNS=$COLUMNS --rm --no-deps'
+  alias dr='d run --rm --name dr$$ -it'
+fi
+if   c x pcre2grep; then alias g='pcre2grep'
+elif c x pcregrep;  then alias g='pcregrep'
+elif c x grep;      then alias g='grep -E'
 fi
 
 # ____________________
