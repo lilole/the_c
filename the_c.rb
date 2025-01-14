@@ -1653,7 +1653,7 @@ module Ffg
         work_path = work.shift
         begin
           if File.directory?(work_path)
-            next if cfg.fg && File.symlink?(work_path)
+            next if File.symlink?(work_path)
             work[0, 0] = filter!(work_path, Dir.entries(work_path), only_device)
           elsif File.file?(work_path)
             block[work_path]
