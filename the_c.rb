@@ -977,13 +977,9 @@ class Shortcuts
   end
 
   add :jc, "Run journalctl our way", ->(*args) do
-    if args.empty?
-      args = %w[--no-hostname -e -n7777]
-    else
-      args = %w[--no-hostname] + args
-    end
-    args.unshift("env", "SYSTEMD_PAGER=less", "SYSTEMD_LESS=#{less_opts}", "journalctl")
-    c(:sudo, *args)
+    less = "#{less_opts} +G"
+    args = %W[env SYSTEMD_PAGER=less SYSTEMD_LESS=#{less} journalctl --no-hostname] + args
+    args.member?("--user") ? args.shelljoin : c(:sudo, *args)
   end
 
   add :l, "Run ls the preferred way", ->(*args) do
