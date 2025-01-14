@@ -991,13 +991,9 @@ class Shortcuts
   end
 
   add :jc, "Run journalctl our way", ->(*args) do
-    if args.empty?
-      args = %w[--no-hostname -e -n7777]
-    else
-      args = %w[--no-hostname] + args
-    end
-    args.unshift("env", "SYSTEMD_PAGER=less", "SYSTEMD_LESS=#{less_opts}", "journalctl")
-    c(:sudo, *args)
+    less = "#{less_opts} +G"
+    args = %W[env SYSTEMD_PAGER=less SYSTEMD_LESS=#{less} journalctl --no-hostname] + args
+    args.member?("--user") ? args.shelljoin : c(:sudo, *args)
   end
 
   add :l, "Run ls the preferred way", ->(*args) do
@@ -2386,8 +2382,8 @@ if c x docker; then
   alias dcr='dc run -e LINES=$LINES -e COLUMNS=$COLUMNS --rm --no-deps'
   alias dr='d run --rm --name dr$$ -it'
 fi
-if   c x pcre2grep; then alias g='pcre2grep'
-elif c x pcregrep;  then alias g='pcregrep'
+if   c x pcre2grep; then alias g='pcre2grep --color=always'
+elif c x pcregrep;  then alias g='pcregrep --color=always'
 elif c x grep;      then alias g='grep -E'
 fi
 
