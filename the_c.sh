@@ -12,15 +12,16 @@
 
 # Enable custom function wrapper.
 #
+[[ -r "$HOME/.the_c.local.rb" ]] && THE_C_BODY=$(< "$HOME/.the_c.local.rb") || \
 THE_C_BODY=$(cat << 'END_THE_C_BODY'
   #
-  # ...paste the entire contents of `the_c.rb` file here...
+  # ...paste the entire contents of `the_c.rb` file here, or leave this blank
+  # and copy `the_c.rb` to the "$HOME/.the_c.local.rb" location...
   #
   # Note that `the_c init` will use the `THE_C_BODY` env var and unset it.
   #
-  # If you want to use your own command service, or not include all of the
-  # non-Bash source here, you can point directly to your own file below, with
-  # these steps:
+  # If you want to use your own command service, you can point directly to your
+  # own file below, with these steps:
   #   1. Remove this block that sets `THE_C_BODY`.
   #   2. Change `THE_C[path]` assignment in the "init)" block below to your
   #      command service executable file's path.
@@ -108,7 +109,7 @@ the_c() {
         {
           echo -e '\nProcesses:'; the_c assert pid; c psg '\b(pts/\d+|bash|the_c)\b'
           echo -e '\nPipes:';     the_c assert base && c l -t "${THE_C[base]}"*
-          echo -e '\nTmpFiles:';  the_c assert tmp  && c l -t "${THE_C[tmp]}"/Shortcuts-*
+          echo -e '\nTmpFiles:';  the_c assert tmp  && c l -t "${THE_C[tmp]}"/TheC-Shortcuts-*
         } 2>&1 | c m
       ;;
 
