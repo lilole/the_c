@@ -1,6 +1,6 @@
 # frozen_string_literal: true
 #
-# Copyright 2024 Dan Higgins
+# Copyright 2024-2025 Dan Higgins
 # SPDX-License-Identifier: Apache-2.0
 
 ### Every shell shortcut macro/script/tool in a single block of Ruby code.
@@ -1480,6 +1480,7 @@ module TheC
           "gh"  => "#{ENV["HOME"]}/code/gh",
           "ghn" => "#{ENV["HOME"]}/code/gh/nuttall",
           "ghs" => "#{ENV["HOME"]}/code/gh/sudoku-rb",
+          "pca" => "#{ENV["HOME"]}/var/AndroidStudioProjects/PreciousCargoAlert",
           "r"   => "#{ENV["HOME"]}/code/rb",
           "rn"  => "#{ENV["HOME"]}/code/rb/nuttall",
           "rs"  => "#{ENV["HOME"]}/code/rb/sudoku",
@@ -1640,7 +1641,7 @@ module TheC
 
           cmd = ->(file) do
             o = opts.shelljoin; f = file.shellescape
-            "git diff #{o} #{f} && echo && git diff --stat #{o} #{f}"
+            "git diff #{o} #{f} && echo && git diff --stat=512 #{o} #{f}"
           end
 
           paths.each do |path|
@@ -1648,7 +1649,7 @@ module TheC
               io.puts ""
               bash(cmd[path], echo: io)
             else # Dir
-              lines = bash("git diff --stat #{path.shellescape}").lines
+              lines = bash("git diff --stat=512 #{path.shellescape}").lines
               summary = lines.last
               lines[0..-2].each do |line|
                 file = line.split[0]
@@ -2278,7 +2279,7 @@ module TheC
       end
 
       add :ui, "Arch package details, --nn for max depth", ->(*args) do
-        depth = "99"
+        depth = "2"
         page do |io|
           args.each do |arg|
             if arg =~ /^--(\d+)$/
