@@ -12,9 +12,12 @@ done; unset f
 ## Enable custom function wrapper.
  #
 THE_C_SOURCE="${THE_C_SOURCE:-$HOME/.bashrc.the_c}"
-[[ -r $THE_C_SOURCE ]] || unset THE_C_SOURCE
+[[ -r $THE_C_SOURCE ]] && { USE_THE_C=true; } || { USE_THE_C=false; unset THE_C_SOURCE; }
 
-if [[ $THE_C_SOURCE ]]; then
+if $USE_THE_C; then
+  # TODO: Move this block to the Ruby file, to be emitted and sourced once here,
+  #       with a special runtime arg, instead of keeping this hard code.
+
   ## Set up this bash instance and the Ruby background command service to
    # interface with each other from the `c` func.
    #
@@ -52,7 +55,7 @@ if [[ $THE_C_SOURCE ]]; then
 
         start)
           the_c assert lock || return 2
-          ruby "${THE_C[path]}" "${THE_C[base]}" $$ < /dev/null & # Start the bg service
+          "${THE_C[path]}" "${THE_C[base]}" $$ < /dev/null & # Start the bg service
           THE_C[pid]=$!
           THE_C[input]="${THE_C[base]}-i${THE_C[pid]}"  # Must match named pipe in the service
           THE_C[output]="${THE_C[base]}-o${THE_C[pid]}" # Must match named pipe in the service
@@ -115,48 +118,62 @@ if [[ $THE_C_SOURCE ]]; then
   }
 
   the_c assert || the_c init start
-fi # if [[ $THE_C_SOURCE ]]
+fi # if $USE_THE_C
 
-# ________________
-# General env-vars
+# ___________________________
+# General env/options/aliases
 
 export LANG=en_US.UTF-8
 export TZ=US/Central
+
+HISTCONTROL=erasedups
+HISTSIZE=12000
+
+case "$TERM" in
+  screen) PS1='\033]0;\u@\h:\w\007\033]2;\u@\h:\w\007\u@\h:\w \t\n\033k\033\134\$ ' ;;
+  cygwin) PS1='\033]0;\u@\h:\w\007\033]2;\u@\h:\w\007\u@\h:\w \t\n\$ ' ;;
+  *)      PS1='\u@\h:\w \t\n\$ '
+esac
+
+set -o emacs -P
+
+# Beyond this point the_c is required _________________________________________
+$USE_THE_C || return
+
 export LESS=$(c less_options)
 export EDITOR=$(c e)
 export VISUAL="$EDITOR"
 #export RUBYOPT='--enable=frozen-string-literal' # Before ruby might run
 
-HISTCONTROL=erasedups
-HISTSIZE=12000
-
 c setpath PATH "$HOME/bin" "$HOME/.local/bin" "${GEM_HOME:-/do_not_set_this}/bin" \
   /usr/local/bin /usr/local/sbin /usr/bin /usr/sbin /bin /sbin
 
-# _______________________
-# General options/aliases
-
-set -o emacs -P
-
-if [[ $THE_C_SOURCE ]]; then
-  case "$TERM" in
-    xterm*) PS1="$(c ps1)" ;;
-    linux)  PS1="$(c ps1)" ;;
-  esac
-else
-  case "$TERM" in
-    screen) PS1='\033]0;\u@\h:\w\007\033]2;\u@\h:\w\007\u@\h:\w \t\n\033k\033\134\$ ' ;;
-    cygwin) PS1='\033]0;\u@\h:\w\007\033]2;\u@\h:\w\007\u@\h:\w \t\n\$ ' ;;
-    *) PS1='\u@\h:\w \t\n\$ '
-  esac
-fi
+[[ $TERM =~ ^xterm|^linux ]] && PS1="$(c ps1)"
 
 # Aliases for most common operations
 for a in e l m o u; do
   alias $a="c $a"
 done; unset a
 
-# General shortcut aliases
+# ________________________________
+# Specific app env/options/aliases
+
+c at_home && export XZ_DEFAULTS='--threads=8 --verbose -9' # Faster xz compression
+
+# rbenv
+if [[ -d "$HOME/.rbenv/shims" ]]; then
+  [[ $RBENV_ROOT ]] && c setpath PATH "$RBENV_ROOT/shims" "$RBENV_ROOT/bin" 0
+  export RBENV_ROOT="$HOME/.rbenv"
+fi
+if [[ $RBENV_ROOT ]]; then
+  c setpath PATH "$HOME/bin" "$HOME/.local/bin" "$RBENV_ROOT/shims" "$RBENV_ROOT/bin" /usr/local/bin
+  #eval "$(rbenv init -)" # Creates some convenience functions
+
+  unset rbenv
+  alias rbenv="env RUBY_CONFIGURE_OPTS=--disable-install-doc '$(type -P rbenv)'"
+fi
+
+# Shortcut aliases
 c x journalctl && alias jc='c jc'
 c x uys        && alias pcc='uys pcc'
 c x systemctl  && alias sc='c sudo systemctl'
@@ -177,24 +194,6 @@ elif c x pcre2grep; then alias g='pcre2grep --color=always'
 elif c x pcregrep;  then alias g='pcregrep --color=always'
 elif c x grep;      then alias g='grep -E'
 fi
-
-# ____________________
-# Specific app options
-
-# rbenv
-if [[ -d "$HOME/.rbenv/shims" ]]; then
-  [[ $RBENV_ROOT ]] && c setpath PATH "$RBENV_ROOT/shims" "$RBENV_ROOT/bin" 0
-  export RBENV_ROOT="$HOME/.rbenv"
-fi
-if [[ $RBENV_ROOT ]]; then
-  c setpath PATH "$HOME/bin" "$HOME/.local/bin" "$RBENV_ROOT/shims" "$RBENV_ROOT/bin" /usr/local/bin
-  #eval "$(rbenv init -)" # Creates some convenience functions
-
-  unset rbenv
-  alias rbenv="env RUBY_CONFIGURE_OPTS=--disable-install-doc '$(type -P rbenv)'"
-fi
-
-c at_home && export XZ_DEFAULTS='--threads=8 --verbose -9' # Faster xz compression
 
 # _____________________________________________
 # Always at bottom: Start X or screen if needed
