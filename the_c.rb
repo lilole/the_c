@@ -4,38 +4,38 @@
 # Copyright 2024-2025 Dan Higgins
 # SPDX-License-Identifier: Apache-2.0
 
-### Every shell shortcut macro/script/tool in a single block of Ruby code.
-  #
-  # Notes:
-  # - Requires Ruby 3.1+ and Linux.
-  # - This is meant to be pasted into a bashrc to work alongside a custom "c"
-  #   function. For an example see:
-  #     https://github.com/lilole/the_c/blob/main/bashrc.example
-  # - Defined Ruby shortcuts MUST return one of these standard types:
-  #   - `nil`.......Reports a nop to the caller.
-  #   - `String`....A bit of bash code to evaluate in the caller's context.
-  #   - `Integer`...Return the value as an exit code to the caller.
-  #   - truthy......Reports a success to the caller.
-  #   - falsey......Reports a failure to the caller.
-  # - This is designed to be a local command service, by starting up in the
-  #   background and communicating with clients by named pipes. This design is
-  #   crazy fast but also puts some constraints on the code for I/O.
-  # - Shortcut worker methods MUST accept an `io` param if they need to output
-  #   results to the tty. The `io` param may simply turn out to be `$stdout`,
-  #   but the worker method MUST NOT assume it writes to `$stdout`.
-  # - In general shortcuts should only use `$stderr` for info messages to user.
-  # - In general shortcuts should try first to return a String that would be
-  #   evaluated as bash code in the caller's context. This is the best way to
-  #   ensure that shortcuts can call other shortcuts, and can even be used in
-  #   pipelines of shortcuts.
-  # - It's safe for shortcuts to raise error for any abrupt/abnormal end
-  #   condition. The main handler code here will catch all exceptions,
-  #   including `SystemExit`, and display the `Error` object's message.
-  # - The `:m` shortcut is a special case, because the `page` helper method
-  #   uses it internally for cases where large amounts of data may need to be
-  #   viewed.
-  # - Follow the patterns here to tweak for your own env. All available
-  #   features and their usage should become self evident from the patterns.
+## Every shell shortcut macro/script/tool in a single block of Ruby code.
+ #
+ # Notes:
+ # - Requires Ruby 3.1+ and Linux.
+ # - This is meant to be pasted into a bashrc to work alongside a custom "c"
+ #   function. For an example see:
+ #     https://github.com/lilole/the_c/blob/main/the_c.bashrc
+ # - Defined Ruby shortcuts MUST return one of these standard types:
+ #   - `nil`.......Reports a nop to the caller.
+ #   - `String`....A bit of bash code to evaluate in the caller's context.
+ #   - `Integer`...Return the value as an exit code to the caller.
+ #   - truthy......Reports a success to the caller.
+ #   - falsey......Reports a failure to the caller.
+ # - This is designed to be a local command service, by starting up in the
+ #   background and communicating with clients by named pipes. This design is
+ #   crazy fast but also puts some constraints on the code for I/O.
+ # - Shortcut worker methods MUST accept an `io` param if they need to output
+ #   results to the tty. The `io` param may simply turn out to be `$stdout`,
+ #   but the worker method MUST NOT assume it writes to `$stdout`.
+ # - In general shortcuts should only use `$stderr` for info messages to user.
+ # - In general shortcuts should try first to return a String that would be
+ #   evaluated as bash code in the caller's context. This is the best way to
+ #   ensure that shortcuts can call other shortcuts, and can even be used in
+ #   pipelines of shortcuts.
+ # - It's safe for shortcuts to raise error for any abrupt/abnormal end
+ #   condition. The main handler code here will catch all exceptions,
+ #   including `SystemExit`, and display the `Error` object's message.
+ # - The `:m` shortcut is a special case, because the `page` helper method
+ #   uses it internally for cases where large amounts of data may need to be
+ #   viewed.
+ # - Follow the patterns here to tweak for your own env. All available
+ #   features and their usage should become self evident from the patterns.
 
 require "io/console"
 require "shellwords"
@@ -52,8 +52,8 @@ module TheC
         @cpu_count ||= IO.read("/proc/cpuinfo").scan(/^processor/).size
       end
 
-      ### Find and cache a tmp dir to write to that is probably in memory.
-        #
+      ## Find and cache a tmp dir to write to that is probably in memory.
+       #
       def fast_tmp_dir
         @fast_tmp_dir ||= begin
           result = %w[/dev/shm /tmp].detect { File.writable?(_1) }
@@ -61,8 +61,8 @@ module TheC
         end
       end
 
-      ### Find and cache current context's classname in slug form.
-        #
+      ## Find and cache current context's classname in slug form.
+       #
       def my_classname
         @my_classname ||= begin
           myclass = (Module === self) ? self : self.class
@@ -78,28 +78,28 @@ module TheC
 
       Result = Struct.new(:exitcode, :fail?, :line, :lines, :ok?, :okout, :out, :stderr, :stdout)
 
-      ### Run `bash` with input as a script, and return an object with useful
-        # details about the completed process. This is a souped-up version of the
-        # `%x{}` operator. The return object has these attrs:
-        #   exitcode => Integer exit code of the process.
-        #   fail? => Boolean true iff the process exited abnormally.
-        #   line => The last element of `lines`, maybe nil.
-        #   lines => The captured stdout lines as an array of chomped strings.
-        #   ok? => Boolean true iff the process exited normally.
-        #   okout => If the process exited normally, this will be the `out` attr
-        #       value, but if not this will be `nil`.
-        #   out => Combined stdout/stderr output captured in a chomped String.
-        #   stderr => Only stderr output captured in a chomped String.
-        #   stdout => Only stdout output captured in a chomped String.
-        # Valid values for `opts` are:
-        #   :echo => Also send all process stdout/stderr output to current $stdout.
-        #   :errs => Also send all process stderr to current $stderr.
-        # Valid keys for `opts2` are:
-        #   :echo => If truthy, also send all process stdout/stderr output to given
-        #       value, if an IO, or to current $stdout.
-        #   :errs => If truthy, also send all process stderr output to given
-        #       value, if an IO, or to current $stderr.
-        #
+      ## Run `bash` with input as a script, and return an object with useful
+       # details about the completed process. This is a souped-up version of the
+       # `%x{}` operator. The return object has these attrs:
+       #   exitcode => Integer exit code of the process.
+       #   fail? => Boolean true iff the process exited abnormally.
+       #   line => The last element of `lines`, maybe nil.
+       #   lines => The captured stdout lines as an array of chomped strings.
+       #   ok? => Boolean true iff the process exited normally.
+       #   okout => If the process exited normally, this will be the `out` attr
+       #       value, but if not this will be `nil`.
+       #   out => Combined stdout/stderr output captured in a chomped String.
+       #   stderr => Only stderr output captured in a chomped String.
+       #   stdout => Only stdout output captured in a chomped String.
+       # Valid values for `opts` are:
+       #   :echo => Also send all process stdout/stderr output to current $stdout.
+       #   :errs => Also send all process stderr to current $stderr.
+       # Valid keys for `opts2` are:
+       #   :echo => If truthy, also send all process stdout/stderr output to given
+       #       value, if an IO, or to current $stdout.
+       #   :errs => If truthy, also send all process stderr output to given
+       #       value, if an IO, or to current $stderr.
+       #
       def bash(script, *opts, **opts2)
         bad_opts = opts + opts2.keys - %i[echo errs]
         raise "Invalid opts: #{bad_opts}" if bad_opts.any?
@@ -160,9 +160,9 @@ module TheC
     ## Generic methods to output text.
      #
     module Output
-      ### Shorthand for outputting error/warning/info messages on `$stderr` in
-        # user's console.
-        #
+      ## Shorthand for outputting error/warning/info messages on `$stderr` in
+       # user's console.
+       #
       def puterr(*strings, nolf: false)
         $stderr << strings.join
         $stderr << "\n" if ! nolf || strings.empty?
@@ -172,13 +172,13 @@ module TheC
     module Prompt
       include Output
 
-      ### Prompt user for confirmation before continuing.
-        # The `opts` may be any string of typable characters, with a single
-        # uppercase to be the default if user presses Enter.
-        # If the choice is "q", then exit immediately.
-        # If the choice is "y" or "n", then return Boolean.
-        # Any other choice returns the character.
-        #
+      ## Prompt user for confirmation before continuing.
+       # The `opts` may be any string of typable characters, with a single
+       # uppercase to be the default if user presses Enter.
+       # If the choice is "q", then exit immediately.
+       # If the choice is "y" or "n", then return Boolean.
+       # Any other choice returns the character.
+       #
       def ask_continue(prompt="Continue?", opts="Ynq")
         def_reply = opts.gsub(/[^A-Z]+/, "")
         raise "Only 1 uppercase is allowed: #{opts.inspect}" if def_reply.size > 1
@@ -199,39 +199,54 @@ module TheC
     module TempFile
       include Info
 
-      ### Create a unique temp file with optional given body, and return an object
-        # with `write`, `path`, and `io` methods. Use the `write` method to add to
-        # the file. When done writing, use the `path` method to close and return
-        # the file's path. Use `io` for direct access to the open File object.
-        #
-        # A single thread in this process will monitor created tmp files and clean
-        # any that were touched 30+ mins ago, each minute, from any process.
-        #
-      def make_temp_file(body=nil)
-        cache = @make_temp_file_cache ||= begin
-          result = {}
-          file_template = "#{fast_tmp_dir}/#{my_classname}-#{$$}-{{SEQ}}.tmp"
-          file_glob     = "#{fast_tmp_dir}/#{my_classname}-*.tmp"
-
-          result[:seq] = 0
-          result[:template] = file_template
-          result[:class] = Class.new do
-            attr_reader :io
-            def initialize(path) = (@io = File.open(path, "w"); File.chmod(0600, path); io.sync = true)
-            def write(data)      = io.write(data)
-            def path             = (io.close; io.path)
-          end
-          result[:cleaner] = Thread.new do
-            ttl = 30 * 60
+      ## Start a single thread that cleans specific glob patterns that are older
+       # than a specific number of secs, checking once per minute.
+       # Use `add_to_clean` to add globs and ttls to be cleaned here.
+       #
+      if $TheC__Mixin__TempFile__to_clean_tups.nil?
+        $TheC__Mixin__TempFile__to_clean_tups = []
+        $TheC__Mixin__TempFile__clean_thread = begin
+          Thread.new do
             loop do
-              now = Time.now
-              Dir.glob(file_glob).each do |file|
-                next if now < File.stat(file).mtime + ttl
-                File.delete(file) rescue nil
+              $TheC__Mixin__TempFile__to_clean_tups.each do |(ttl_secs, glob_pattern)|
+                cutoff = Time.now - ttl_secs
+                Dir.glob(glob_pattern, File::FNM_DOTMATCH).each do |file|
+                  next if File.mtime(file) > cutoff
+                  File.delete(file) rescue nil
+                end
               end
               sleep 60
             end
           end
+        end
+      end
+
+      def self.add_to_clean(ttl_secs, glob_pattern)
+        pairs = $TheC__Mixin__TempFile__to_clean_tups
+        new_pair = [ttl_secs, glob_pattern]
+        pairs << new_pair if ! pairs.member?(new_pair)
+      end
+
+      ## Create a unique temp file with optional given body, and return an object
+       # with `write`, `path`, and `io` methods. Use the `write` method to add to
+       # the file. When done writing, use the `path` method to close and return
+       # the file's path. Use `io` for direct access to the open File object.
+       #
+       # A single thread in this process will monitor created tmp files and clean
+       # any that were touched 30+ mins ago, each minute, from any process.
+       #
+      def make_temp_file(body=nil)
+        cache = @make_temp_file_cache ||= begin
+          result = {}
+          result[:seq] = 0
+          result[:template] = "#{fast_tmp_dir}/#{my_classname}-#{$$}-{{SEQ}}.tmp"
+          result[:class] = Class.new do
+            attr :io
+            def initialize(path) = (@io = File.open(path, "w"); File.chmod(0600, path); io.sync = true)
+            def write(data)      = io.write(data)
+            def path             = (io.close; io.path)
+          end
+          TempFile.add_to_clean(30 * 60, "#{fast_tmp_dir}/#{my_classname}-*.tmp")
           result
         end
 
@@ -247,8 +262,8 @@ module TheC
     end # TempFile
 
     module Text
-      ### Convert a number to a String with thousands separators.
-        #
+      ## Convert a number to a String with thousands separators.
+       #
       def commafy(n) = n.to_s.reverse.gsub(/(\d{3})(?=\d)(?!\d*\.)/, "\\1,").reverse
     end # Text
 
@@ -436,8 +451,8 @@ module TheC
     end
   end # FileNode
 
-  ### A rudimentary Ractor based on anonymous pipes.
-    #
+  ## A rudimentary Ractor based on anonymous pipes.
+   #
   class Practor
     attr_reader :actor_pid, :forked, :from_main_r, :from_main_w, :to_main_r, :to_main_w
 
@@ -1075,27 +1090,148 @@ module TheC
     end
   end # SetPath
 
-  ### Main Ruby entry points for bashrc code to use. This manages named pipes,
-    # listens for input, and responds the output. This is designed to be a
-    # background process that runs alongside the bash process. With this design
-    # the size of the code does not matter, and memory caching can be leveraged,
-    # and responses are as fast as possible.
-    #
+  ## Main Ruby entry points for bashrc code to use. This manages named pipes,
+   # listens for input, and responds the output. This is designed to be a
+   # background process that runs alongside the bash process. With this design
+   # the size of the code does not matter, and memoizing can be leveraged,
+   # and responses are as fast as possible.
+   #
   class Cli
     include TheC::Mixin::Util
 
     attr_reader :base_path, :in_out_delims, :my_pid, :pipe_path_i, :pipe_path_o, :ppid
 
     def initialize(args)
-      @base_path = args[0]
-      @ppid      = args[1].to_i
-      @my_pid = Process.pid
-      @in_out_delims = %w[-i -o] # Separate the base filename from pid for each pipe
+      @base_path = "/tmp/#{File.basename($0)}"
+      if args[0] == "bash_init"
+        bash_init
+      elsif args.size == 1
+        @ppid = args[0].to_i
+        @my_pid = Process.pid
+        @in_out_delims = %w[-i -o] # Separate the base filename from pid for each pipe
+        start
+      else
+        raise "Invalid args"
+      end
     end
 
-    ### Initialize the service and enter event loop.
-      #
+    ## Emit bash initialization code, including the main "c" function, to a temp
+     # file, and return the bash command to source the file.
+     #
+    def bash_init
+      script = +(<<~'END')
+        ## Set up this bash instance and the Ruby background command service to
+         # interface with each other from the `c` func.
+         #
+        the_c() {
+          declare -gA THE_C
+          while [[ $1 ]]; do
+            local _sub_cmd="$1"; shift
+            case "$_sub_cmd" in
+              init)
+                [[ ${THE_C[path]} ]] || THE_C[path]="<%= $0 %>"
+                [[ ${THE_C[base]} ]] || THE_C[base]="<%= base_path %>"
+                THE_C[tmp]=$(for d in /dev/shm /tmp; do [[ -w $d ]] && { echo $d; break; }; done)
+                the_c assert tmp || return 2
+                THE_C[lock]="${THE_C[tmp]}/the_c-$$.lock"
+              ;;
+
+              assert)
+                local attr attrs msg quiet=false
+                [[ $1 ]] && { attrs="$*"; set --; } || attrs='-q pid' # Must consume args
+                for attr in $attrs; do
+                  [[ $attr == -q ]] && { quiet=true; continue; }
+                  [[ ${THE_C[$attr]} ]] && continue
+                  if ! $quiet; then
+                    case "$attr" in
+                      tmp)  msg='+ the_c: Cannot init: Cannot find tmp dir.' ;;
+                      lock) msg='+ the_c: Call init first.' ;;
+                      pid)  msg='+ the_c is not running.' ;;
+                      *)    msg="+ the_c: Attribute '$attr' is not set." ;;
+                    esac
+                    echo >&2 "$msg"
+                  fi
+                  return 1
+                done
+              ;;
+
+              start)
+                the_c assert lock || return 2
+                "${THE_C[path]}" $$ < /dev/null & # Start the bg service
+                THE_C[pid]=$!
+                THE_C[input]="${THE_C[base]}-i${THE_C[pid]}"  # Must match named pipe in the service
+                THE_C[output]="${THE_C[base]}-o${THE_C[pid]}" # Must match named pipe in the service
+                trap 'the_c stop' EXIT
+                local t=30; while [[ ! -e ${THE_C[output]} ]]; do (( --t < 1 )) && break; sleep 0.1; done
+                (( t > 0 )) || { echo >&2 '+ the_c: Did not start.'; the_c stop; return 2; }
+              ;;
+
+              stop)
+                local rc=0
+                the_c assert pid && kill "${THE_C[pid]}";    (( rc += $? ))
+                rm -f "${THE_C[input]}" "${THE_C[output]}";  (( rc += $? ))
+                unset THE_C[pid] THE_C[input] THE_C[output]; (( rc += $? ))
+                (( rc == 0 )) || sleep 3
+              ;;
+
+              status)
+                {
+                  echo -e '\nProcesses:'; the_c assert pid; c psg '\b(pts/\d+|bash|the_c)\b'
+                  echo -e '\nPipes:';     the_c assert base && c l -t "${THE_C[base]}"*
+                  echo -e '\nTmpFiles:';  the_c assert tmp  && c l -t "${THE_C[tmp]}"/TheC-Shortcuts-*
+                } 2>&1 | c m
+              ;;
+
+              lock_on)
+                the_c assert lock && while ! mkdir "${THE_C[lock]}" &> /dev/null; do sleep 0.1; done
+              ;;
+
+              lock_off)
+                the_c assert lock && rmdir "${THE_C[lock]}"
+              ;;
+
+              *) return 1 ;;
+            esac
+          done
+        }
+
+        ## The wrapper for all the Ruby shortcuts.
+         #
+        c() {
+          local last_rc=$? # Must be first; may be displayed in PS1
+          the_c assert pid || return 1
+
+          # Send the command to the bg service.
+          # Note that caching `$last_rc` or `pwd` sometimes breaks here, so we always send them.
+          local -a cmd=(
+            "{{ENV[\"THE_C_LAST_RC\"]=\"$last_rc\";Dir.chdir(\"${PWD//\"/\\\"}\")}}"
+            "$@"
+          )
+          the_c lock_on
+          echo "${cmd[*]@Q}" > "${THE_C[input]}"
+
+          # Read the response from the bg service
+          local result
+          IFS='' read -r result < "${THE_C[output]}"
+          the_c lock_off
+
+          # Complete the bg service logic in this context
+          eval "$result"
+        }
+
+        the_c assert || the_c init start
+      END
+
+      script.gsub!(/<%=.+?%>/) { |match| eval(match[3..-3].strip) }
+      script_file = "#{base_path}.init.#{$$}"
+      File.write(script_file, script)
+      puts ". #{script_file}"
+    end
+
+    ## Initialize the service and enter event loop.
+     #
     def start
+      TheC::Mixin::TempFile.add_to_clean(0, "#{base_path}.init.*") # For `bash_init()`
       adjust_process
       clean_old_pipes
       install_new_pipes
@@ -1167,8 +1303,8 @@ module TheC
       module DslMethods
         attr_reader :added_names
 
-        ### Add a new Ruby shortcut in a DSL style. See calls to this in `TheC::Shortcuts::Core`.
-          #
+        ## Add a new Ruby shortcut in a DSL style. See calls to this in `TheC::Shortcuts::Core`.
+         #
         def add(name, description, body)
           raise "Arg 'body' must be a proc" if ! Proc === body
           name = name.to_sym
@@ -1189,15 +1325,15 @@ module TheC
     module Helpers
       include TheC::Mixin::Util
 
-      ### Instance access to the names added with the `add` DSL method.
-        #
+      ## Instance access to the names added with the `add` DSL method.
+       #
       def added_names = self.class.added_names
 
-      ### The internal Rubyized `c` function, which calls shortcuts previously
-        # defined with `add` from within Ruby code. Return values are forced to
-        # follow the rules defined in the main comments "Notes:" section.
-        # If the given `name` is not defined, then assume the `:zzz` shortcut.
-        #
+      ## The internal Rubyized `c` function, which calls shortcuts previously
+       # defined with `add` from within Ruby code. Return values are forced to
+       # follow the rules defined in the main comments "Notes:" section.
+       # If the given `name` is not defined, then assume the `:zzz` shortcut.
+       #
       def c(*args)
         args = process_encodes(args)
         return list if args.empty? || args[0] =~ /^-[^-]*[h?]|^--help$/
@@ -1212,10 +1348,10 @@ module TheC
         safe_result(status)
       end
 
-      ### Shorthand to combine calling `bash()` with result of `c()`.
-        # The end of the args may be `:echo` or `:errs` to match the same options
-        # supported by `bash()`.
-        #
+      ## Shorthand to combine calling `bash()` with result of `c()`.
+       # The end of the args may be `:echo` or `:errs` to match the same options
+       # supported by `bash()`.
+       #
       def cc(*args, **bash_opts2)
         bash_opts = []
         while %i[echo errs].member?(args.last)
@@ -1224,10 +1360,10 @@ module TheC
         bash(c(*args), *bash_opts, **bash_opts2)
       end
 
-      ### Extract and eval special args sent from the `c` Bash function, formatted
-        # like `{{ <ruby_code> }}`. This is needed for things like the current dir
-        # and exitcode of the last command that ran.
-        #
+      ## Extract and eval special args sent from the `c` Bash function, formatted
+       # like `{{ <ruby_code> }}`. This is needed for things like the current dir
+       # and exitcode of the last command that ran.
+       #
       def process_encodes(args)
         encodes = []
         args.map do |arg|
@@ -1242,9 +1378,9 @@ module TheC
         end
       end
 
-      ### Ensure the given result is safe for `eval` to run it in bash. This logic
-        # follows the rules defined in the main comments "Notes:" section.
-        #
+      ## Ensure the given result is safe for `eval` to run it in bash. This logic
+       # follows the rules defined in the main comments "Notes:" section.
+       #
       def safe_result(result)
         if    String === result  then result.chomp
         elsif Integer === result then "_() { return #{result}; }; _"
@@ -1253,10 +1389,10 @@ module TheC
         end
       end
 
-      ### Pass an IO to a user code block which captures lines written to it in a
-        # temp file. Then return bash code that uses the `:m` shortcut, which should
-        # run a pager command (e.g. `less`), to view that file.
-        #
+      ## Pass an IO to a user code block which captures lines written to it in a
+       # temp file. Then return bash code that uses the `:m` shortcut, which should
+       # run a pager command (e.g. `less`), to view that file.
+       #
       def page(*args)
         tmpfile = make_temp_file
 
@@ -1270,15 +1406,15 @@ module TheC
           end
         end
 
-        ### Things are better if the entire file to view is written. So here we
-          # pause up to 3 secs for the client code to finish.
+        ## Things are better if the entire file to view is written. So here we
+         # pause up to 3 secs for the client code to finish.
         run_done = -> { ! run.status || run.status == "aborting" }
         ts_end = Time.now + 3
         sleep 0.1 while ! run_done[] && Time.now < ts_end
 
-        ### Now ready to pass control back to bash and display the file.
-          # We use `tail` here if the client code is still running, to force the
-          # pager to not assume the file is completely written.
+        ## Now ready to pass control back to bash and display the file.
+         # We use `tail` here if the client code is still running, to force the
+         # pager to not assume the file is completely written.
         pager = c(:m, *args)
         if run_done[]
           "#{pager} -F #{tmpfile.path.shellescape}" # `-F` = exit if 1 screen
@@ -1288,13 +1424,13 @@ module TheC
         end
       end
 
-      ### Pass an IO to a user code block which captures lines written to it in
-        # a String, and return that String as the result.
-        #
+      ## Pass an IO to a user code block which captures lines written to it in
+       # a String, and return that String as the result.
+       #
       def strout = StringIO.open { |io| yield(io); io.rewind; io.read }
 
-      ### List all defined shortcuts sorted with descriptions.
-        #
+      ## List all defined shortcuts sorted with descriptions.
+       #
       def list
         page do |io|
           width = added_names.keys.map(&:size).max
@@ -1306,9 +1442,9 @@ module TheC
         end
       end
 
-      ### Reusable code that calls shortcuts to find the parent of the first `.git`
-        # dir above each given dir, or all `.git` dir parents below each given dir.
-        #
+      ## Reusable code that calls shortcuts to find the parent of the first `.git`
+       # dir above each given dir, or all `.git` dir parents below each given dir.
+       #
       def find_git_workspaces(dirs)
         dirs.map do |dir|
           root = cc(:proot, ".git", dir).line # Search up tree
@@ -1322,12 +1458,12 @@ module TheC
         end.flatten
       end
 
-      ### Run the given lines of code in the foreground, and write the code's result
-        # as a single line of bash code to evaluate in the caller's context.
-        # This is required for any shortcut that needs to read stdin, because this
-        # command service runs in the background.
-        # The given code must NOT touch stdout, only stdin and stderr.
-        #
+      ## Run the given lines of code in the foreground, and write the code's result
+       # as a single line of bash code to evaluate in the caller's context.
+       # This is required for any shortcut that needs to read stdin, because this
+       # command service runs in the background.
+       # The given code must NOT touch stdout, only stdin and stderr.
+       #
       def foreground_run(code, argv_varname=nil, argv=nil)
         if argv_varname
           raise "Both `argv_varname` and `argv` are required" if ! argv
@@ -1336,8 +1472,8 @@ module TheC
           argv = []
         end
 
-        ### We want to make sure the given code truly runs in the same context as any
-          # other defined shortcut, with exception handling similar to method `c`.
+        ## We want to make sure the given code truly runs in the same context as any
+         # other defined shortcut, with exception handling similar to method `c`.
         code = <<~END
           require #{$0.inspect}
 
@@ -1360,8 +1496,8 @@ module TheC
         "$(ruby #{temp.path.shellescape})"
       end
 
-      ### Map certain keywords to ANSI color escape sequences.
-        #
+      ## Map certain keywords to ANSI color escape sequences.
+       #
       def color_escape(words)
         @color_escape ||= begin
           {
@@ -1383,20 +1519,20 @@ module TheC
         end.join
       end
 
-      ### Colorize all matches of a regex.
-        #
+      ## Colorize all matches of a regex.
+       #
       def color_matches(text, regex, cole_name)
         cole = color_escape([cole_name])
         regex = /^/ if regex.source == "."
         text.gsub(regex, "#{cole}\\0#{color_escape(["reset"])}")
       end
 
-      ### Single SOT for our standard options for `less`.
-        #
+      ## Single SOT for our standard options for `less`.
+       #
       def less_opts = @less_opts ||= "-FIJMRSWX#8 --status-col-width=1"
 
-      ### State information for the PS1-related shortcuts.
-        #
+      ## State information for the PS1-related shortcuts.
+       #
       class Ps1Helper
         attr_accessor :last_rc, :ps1, :x_git
         attr_reader   :context, :last_user
@@ -1422,8 +1558,8 @@ module TheC
         end
       end # Ps1Helper
 
-      ### Single instance of PS1 state info.
-        #
+      ## Single instance of PS1 state info.
+       #
       def ps1_helper = @ps1_helper ||= Ps1Helper.new(self)
     end # Helpers
 
@@ -1943,19 +2079,19 @@ module TheC
 
           END
           "rbm" => (<<~END),
-            ### X
-              #
+            ## X
+             #
             module X
               #
             end
           END
           "rbc" => (<<~END),
-            ### X
-              #
+            ## X
+             #
             class X
               #include X
 
-              attr_reader :x
+              attr :x
 
               def initialize(x)
                 @x = x
@@ -2270,13 +2406,13 @@ module TheC
         result || c(:sudo, @upd, *args)
       end
 
-      add :ua, "Run pikaur", ->(*args) do
+      add :ua, "Run aura", ->(*args) do
         if args[0] == "c"
-          args = %w[-Qua]
+          args = %w[-Auyd --log-level=info]
         else
-          args = args.map { _1 =~ /^-S/ ? "#{_1}a" : _1 }
+          args = args.map { _1 =~ /^-S(.*)/ ? "-A#{$~[1]}" : _1 }
         end
-        "pikaur #{args.shelljoin}"
+        "aura #{args.shelljoin}"
       end
 
       add :ui, "Arch package details, --nn for max depth", ->(*args) do
@@ -2334,4 +2470,4 @@ module TheC
   end # Shortcuts
 end # TheC
 
-TheC::Cli.new(ARGV).start if $0 == __FILE__
+TheC::Cli.new(ARGV) if $0 == __FILE__
