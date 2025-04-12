@@ -203,26 +203,28 @@ module TheC
        # than a specific number of secs, checking once per minute.
        # Use `add_to_clean` to add globs and ttls to be cleaned here.
        #
-      if $TheC__Mixin__TempFile__to_clean_tups.nil?
-        $TheC__Mixin__TempFile__to_clean_tups = []
-        $TheC__Mixin__TempFile__clean_thread = begin
-          Thread.new do
-            loop do
-              $TheC__Mixin__TempFile__to_clean_tups.each do |(ttl_secs, glob_pattern)|
-                cutoff = Time.now - ttl_secs
-                Dir.glob(glob_pattern, File::FNM_DOTMATCH).each do |file|
-                  next if File.mtime(file) > cutoff
-                  File.delete(file) rescue nil
+      if $TheC__Mixin__TempFile_state.nil?
+        ->(state) do
+          state[:to_clean_tups] = []
+          state[:clean_thread] = begin
+            Thread.new do
+              loop do
+                state[:to_clean_tups].each do |(ttl_secs, glob_pattern)|
+                  cutoff = Time.now - ttl_secs
+                  Dir.glob(glob_pattern, File::FNM_DOTMATCH).each do |file|
+                    next if File.mtime(file) > cutoff
+                    File.delete(file) rescue nil
+                  end
                 end
+                sleep 60
               end
-              sleep 60
             end
           end
-        end
+        end.call($TheC__Mixin__TempFile_state = {})
       end
 
       def self.add_to_clean(ttl_secs, glob_pattern)
-        pairs = $TheC__Mixin__TempFile__to_clean_tups
+        pairs = $TheC__Mixin__TempFile_state[:to_clean_tups]
         new_pair = [ttl_secs, glob_pattern]
         pairs << new_pair if ! pairs.member?(new_pair)
       end
