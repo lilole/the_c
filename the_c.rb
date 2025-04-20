@@ -2068,7 +2068,7 @@ module TheC
       end
 
       add :l, "Run ls the preferred way", ->(*args) do
-        "ls -alF --block-size=\"'1\" --color=always #{args.shelljoin} 2>&1 | #{c :m}"
+        "ls -alF --group-directories-first --block-size=\"'1\" --color=always #{args.shelljoin} 2>&1 | #{c :m}"
       end
 
       add :lc, "Load predefined text into clipboard", ->(*args) do
