@@ -212,8 +212,14 @@ module TheC
                 state[:to_clean_tups].each do |(ttl_secs, glob_pattern)|
                   cutoff = Time.now - ttl_secs
                   Dir.glob(glob_pattern, File::FNM_DOTMATCH).each do |file|
-                    next if File.mtime(file) > cutoff
-                    File.delete(file) rescue nil
+                    begin
+                      File.delete(file) if File.mtime(file) <= cutoff
+                    rescue
+                      ## If we get here the `mtime` or `delete` failed, so it's
+                       # already gone. This is fairly common because other processes
+                       # will have this same thread with the same globs.
+                      nil
+                    end
                   end
                 end
                 sleep 60
