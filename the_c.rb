@@ -1277,7 +1277,11 @@ module TheC
       # Try removing old pipes that somehow got left open
       in_out_delims.each do |delim|
         Dir.glob("#{base_path}#{delim}*").each do |check_path|
-          next if Process.uid != File.stat(check_path).uid
+          begin
+            next if Process.uid != File.stat(check_path).uid
+          rescue Errno::ENOENT
+            next # A racing process probably removed it
+          end
           check_pid = check_path.split(delim).last.to_i
           clean_it = (check_pid == my_pid)
           if ! clean_it
@@ -1288,7 +1292,7 @@ module TheC
             begin
               File.delete(check_path)
             rescue => e
-              next if Errno::ENOENT === e # Sometimes the pipe goes away after statting it
+              next if Errno::ENOENT === e # A racing process probably removed it
               puterr "+ Delete #{check_path.inspect} failed: #{e.class}: #{e.message}"
             end
           end
