@@ -91,7 +91,7 @@ fi
  #
 if c need_x; then
   de=startxfce4 log="$HOME/.log.$de"
-  echo ".bashrc: '$de' log is at: '$log'"; sleep 2
+  echo ".bashrc: '$de' log is at: '$log'"; sleep 1
   exec &> "$log"; the_c stop; exec $de
 #elif c need_screen; then
 #  the_c stop; exec screen -xRR
