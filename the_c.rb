@@ -38,10 +38,33 @@
  #   features and their usage should become self evident from the patterns.
 
 require "io/console"
+require "json"
 require "shellwords"
 require "stringio"
 
 module TheC
+  module Extensions
+    def self.apply
+      ::String.prepend String
+    end
+
+    module String
+      ## Allow `some_string[/(foo)(bar).../, 1, 2, ...]` to return an array of all
+       # the captures. All array elements may be `nil` if there is no match.
+       #
+      def [](*args)
+        if Regexp === args[0] && args.size > 2
+          rem = args[0].match(self)
+          args[1..-1].map { |idx| rem&.[](idx) }
+        else
+          super
+        end
+      end
+    end # String
+  end # Extensions
+
+  Extensions.apply
+
   module Mixin
     ## Generic methods for system or context info.
      #
@@ -105,10 +128,8 @@ module TheC
         raise "Invalid opts: #{bad_opts}" if bad_opts.any?
         echo_to = opts2[:echo].then { |opt| (IO === opt) ? opt : (opt && $stdout) }
         errs_to = opts2[:errs].then { |opt| (IO === opt) ? opt : (opt && $stderr) }
-        opts.each do |opt|
-          opt == :echo and echo_to = $stdout
-          opt == :errs and errs_to = $stderr
-        end
+        echo_to ||= $stdout if opts.member?(:echo)
+        errs_to ||= $stderr if opts.member?(:errs)
 
         pipr_s, pipw_s = IO.pipe # Process's stdout redirect
         pipr_e, pipw_e = IO.pipe # Process's stderr redirect
@@ -272,7 +293,7 @@ module TheC
     module Text
       ## Convert a number to a String with thousands separators.
        #
-      def commafy(n) = n.to_s.reverse.gsub(/(\d{3})(?=\d)(?!\d*\.)/, "\\1,").reverse
+      def commafy(n) = n.to_s.tap { |s| s.reverse!; s.gsub!(/(\d{3})(?=\d)(?!\d*\.)/, "\\1,"); s.reverse! }
     end # Text
 
     ## Output text to a configured IO, with default `$stdout`.
@@ -1575,7 +1596,7 @@ module TheC
       def ps1_helper = @ps1_helper ||= Ps1Helper.new(self)
     end # Helpers
 
-    ## The actual shortcut definitions, which depend on the 1400+ lines above.
+    ## The actual shortcut definitions, which depend on the 1500+ lines above.
      #
     class Core
       include Dsl
@@ -2133,11 +2154,79 @@ module TheC
       end
 
       add :mi, "Probe media info", ->(*args) do
+        files = []; full = help = nil; idx = -1
+        while (arg = args[idx += 1])
+          arg =~ /^-[^-]*[h?]|^--help$/ and help = true
+          arg =~ /^-[^-]*f|^--full$/    and full = true
+          arg[0] != "-" and files << arg
+        end
+        help ||= files.empty? || ! files.all? { File.readable?(_1) }
+        if help
+          puterr(<<~END)
+            Usage: mi [--full|-f] FILE ...
+            Where:
+              -f, --full => Show all discovered media params as raw JSON.
+                  Default is to show common params.
+          END
+          return false
+        end
+        subject = {}
+        detect = ->(*names) { subject[names.detect { |n| subject[n] }] || "?" }
+        to_num = ->(*names) do
+          s = detect[*names].strip
+          f = (a, b = s[/\A([\d.]+)[^\d.]+([\d.]+)\z/, 1, 2].map(&:to_f); a / b) rescue Float::NAN
+          f.nan? ? s.to_f : f
+        end
+        with_num = ->(*names) { "#{commafy(to_num[*names].round(3))} (#{detect[*names]})" }
+        with_kbps = ->(*names) { "#{commafy((to_num[*names] / 1000).round)} Kbps (#{detect[*names]})" }
+        with_time = ->(*names) { n = to_num[*names].round; "#{n / 60}m #{n % 60}s (#{detect[*names]})" }
+        common = ->(json) do
+          hash = JSON.parse(json); text = +""
+          for stream in hash["streams"]
+            subject.clear.merge!(stream)
+            if stream["codec_type"] == "video"
+              text << <<~END
+                Video_stream:
+                  Index:      #{detect["index"]}
+                  Codec:      #{detect["codec_long_name", "codec_name"]}
+                  Size:       #{detect["width"]}x#{detect["height"]} px
+                  Frame_rate: #{with_num["avg_frame_rate", "r_frame_rate"]} hz
+                  DAR:        #{with_num["display_aspect_ratio", "dar"]}
+                  SAR:        #{with_num["sample_aspect_ratio", "sar"]}
+                  Bitrate:    #{with_kbps["bit_rate"]}
+              END
+            elsif stream["codec_type"] == "audio"
+              text << <<~END
+                Audio_stream:
+                  Index:       #{stream["index"]}
+                  Codec:       #{detect["codec_long_name", "codec_name"]}
+                  Sample_rate: #{commafy(detect["sample_rate"])} hz
+                  Channels:    #{detect["channels"]}
+                  Bitrate:     #{with_kbps["bit_rate"]}
+              END
+            else
+              text << <<~END
+                Unknown_stream:
+                  Index: #{stream["index"]}
+              END
+            end
+          end
+          subject.clear.merge!(hash["format"])
+          text << <<~END
+            Container:
+              Name:     #{detect["format_long_name", "format_name"]}
+              Size:     #{commafy(detect["size"])} B
+              Chapters: #{(hash["chapters"] || []).size}
+              Duration: #{with_time["duration"]}
+              Bitrate:  #{with_kbps["bit_rate"]}
+          END
+        end
+        script = "ffprobe -loglevel quiet -print_format json -show_format -show_streams -show_chapters"
         page do |io|
-          script = "ffprobe -loglevel quiet -print_format json -show_format -show_streams -show_chapters "
           for file in args
             io.puts "\n+ #{file.inspect}"
-            bash(script + file.shellescape, echo: io)
+            raw = `#{script} #{file.shellescape}`.strip
+            io.puts(full ? raw : common[raw])
           end
         end
       end
