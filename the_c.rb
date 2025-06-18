@@ -1645,34 +1645,26 @@ module TheC
 
       add :d, "Change dirs with various abbreviations", ->(*args) do
         map = {
-          "c"   => "#{ENV["HOME"]}/code",
-          "b"   => "#{ENV["HOME"]}/code/bash",
-          "gh"  => "#{ENV["HOME"]}/code/gh",
-          "ghn" => "#{ENV["HOME"]}/code/gh/nuttall",
-          "ghs" => "#{ENV["HOME"]}/code/gh/sudoku-rb",
-          "pca" => "#{ENV["HOME"]}/var/AndroidStudioProjects/PreciousCargoAlert",
-          "r"   => "#{ENV["HOME"]}/code/rb",
-          "rn"  => "#{ENV["HOME"]}/code/rb/nuttall",
-          "rs"  => "#{ENV["HOME"]}/code/rb/sudoku",
-          "s"   => "#{ENV["HOME"]}/shop",
-          "t"   => "#{ENV["HOME"]}/tmp",
-          "l"   => "/var/log",
-          "uNN" => "(cd up NN dir levels)"
-        }
+          c:   "~/code",
+          b:   "~/code/bash",
+          f:   "~/shop/FLR",
+          gh:  "~/code/gh",
+          pca: "~/var/AndroidStudioProjects/PreciousCargoAlert",
+          r:   "~/code/rb",
+          s:   "~/shop",
+          t:   "~/tmp",
+          v:   "~/media/Video",
+          uNN: "(cd up NN dir levels)"
+        }.map { |k, v| [k.to_s, v.to_s.sub(/^~/, ENV["HOME"])] }.to_h
 
-        if args[0] =~ /^u(\d+)$/
-          dir = ([".."] * $~[1].to_i).join("/")
-        else
-          dir = map[args[0]]
-        end
-
+        dir = (args[0] =~ /^u(\d+)$/) ? ([".."] * $~[1].to_i).join("/") : map[args[0]]
         if ! dir
           width = map.values.map(&:size).max
           puterr "Valid abbrevs:"
           map.sort { |a, b| a[1] <=> b[1] }.each do |abbrev, dir|
-            dir = "#{dir} ".ljust(width + 4, ".")
-            puterr "  #{dir} #{abbrev}"
+            puterr "  %s %s" % ["#{dir} ".ljust(width + 4, "."), abbrev]
           end
+          puterr "Examples:\n  $ c d r mp4* # cd to matched subdir\n  $ ls -l `c d v` # List without cd"
           exit(1)
         end
 
