@@ -2176,7 +2176,8 @@ module TheC
           hash = JSON.parse(json); text = +""
           for stream in hash["streams"]
             subject.clear.merge!(stream)
-            if stream["codec_type"] == "video"
+            case stream["codec_type"]
+            when "video"
               text << <<~END
                 Video_stream:
                   Index:      #{detect["index"]}
@@ -2187,7 +2188,7 @@ module TheC
                   SAR:        #{with_num["sample_aspect_ratio", "sar"]}
                   Bitrate:    #{with_kbps["bit_rate"]}
               END
-            elsif stream["codec_type"] == "audio"
+            when "audio"
               text << <<~END
                 Audio_stream:
                   Index:       #{stream["index"]}
@@ -2196,10 +2197,19 @@ module TheC
                   Channels:    #{detect["channels"]}
                   Bitrate:     #{with_kbps["bit_rate"]}
               END
+            when "subtitle"
+              text << <<~END
+                Subtitle_stream:
+                  Index:       #{stream["index"]}
+                  Codec:       #{detect["codec_long_name", "codec_name"]}
+                  Bitrate:     #{commafy(detect["bit_rate"])} bps
+                  Frames:      #{detect["nb_frames"]}
+              END
             else
               text << <<~END
                 Unknown_stream:
                   Index: #{stream["index"]}
+                  Raw:   #{stream.inspect}
               END
             end
           end
@@ -2213,11 +2223,13 @@ module TheC
               Bitrate:  #{with_kbps["bit_rate"]}
           END
         end
-        script = "ffprobe -loglevel quiet -print_format json -show_format -show_streams -show_chapters"
+        script = "ffprobe -hide_banner -loglevel quiet -print_format json" \
+          " -show_format -show_streams -show_chapters -analyzeduration #{120 * 10**6}"
         page do |io|
-          for file in args
+          for file in files
             io.puts "\n+ #{file.inspect}"
-            raw = `#{script} #{file.shellescape}`.strip
+            sz = [File.size(file), 10**9].min
+            raw = `#{script} -probesize #{sz} #{file.shellescape}`.strip
             io.puts(full ? raw : common[raw])
           end
         end
