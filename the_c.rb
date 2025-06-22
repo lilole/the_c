@@ -1511,7 +1511,7 @@ module TheC
         ## We want to make sure the given code truly runs in the same context as any
          # other defined shortcut, with exception handling similar to method `c`.
         code = <<~END
-          require #{$0.inspect}
+          load #{$0.inspect}
 
           shortcuts = TheC::Shortcuts::Core.new
 
@@ -1946,14 +1946,10 @@ module TheC
 
         if (base = args[1])
           base = cc(:gb, "-v", base, :errs).line
-          return false if ! base
         else
-          base = cc(:gb, "-v", " (master|main)$").line
-          if ! base
-            puts "Cannot find default branch."
-            return false
-          end
+          base = cc(:gb, "-v", :errs).line
         end
+        return false if ! base
 
         puts "Creating new branch #{new_br.inspect} based on #{base.inspect}..."
         [
