@@ -2223,11 +2223,11 @@ module TheC
           END
         end
         script = "ffprobe -hide_banner -loglevel quiet -print_format json" \
-          " -show_format -show_streams -show_chapters -analyzeduration #{120 * 10**6}"
+          " -show_format -show_streams -show_chapters -analyzeduration #{4 * 3600 * 10**6}"
         page do |io|
           for file in files
-            io.puts "\n+ #{file.inspect}"
-            sz = [File.size(file), 10**9].min
+            io.puts "\n+ #{file.inspect}"; gb = 10**9
+            sz = (v = File.size(file)) > 16*gb ? v / 4 : (v > 8*gb ? v / 2 : (v > 4*gb ? 4*gb : v))
             raw = `#{script} -probesize #{sz} #{file.shellescape}`.strip
             io.puts(full ? raw : common[raw])
           end
