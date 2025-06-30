@@ -57,6 +57,7 @@ if [[ -d "$HOME/.rbenv/shims" ]]; then
   [[ $RBENV_ROOT ]] && c setpath PATH "$RBENV_ROOT/shims" "$RBENV_ROOT/bin" 0
   export RBENV_ROOT="$HOME/.rbenv"
 fi
+[[ $RBENV_ROOT && -d $RBENV_ROOT ]] || unset RBENV_ROOT
 if [[ $RBENV_ROOT ]]; then
   c setpath PATH "$HOME/bin" "$HOME/.local/bin" "$RBENV_ROOT/shims" "$RBENV_ROOT/bin" /usr/local/bin
   #eval "$(rbenv init -)" # Creates some convenience functions
