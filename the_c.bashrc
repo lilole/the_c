@@ -41,7 +41,7 @@ export VISUAL="$EDITOR"
 c setpath PATH "$HOME/bin" "$HOME/.local/bin" \
   /usr/local/bin /usr/local/sbin /usr/bin /usr/sbin /bin /sbin
 
-for d in "$GEM_HOME" "$HOME"/.local/share/gem/ruby/*; do
+for d in "$HOME"/.local/share/gem/ruby/* "$GEM_HOME"; do
   [[ -d $d ]] && c setpath PATH "$d/bin" 3
 done; unset d
 
