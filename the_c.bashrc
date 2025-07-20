@@ -37,6 +37,7 @@ $("$THE_C_SOURCE" bash_init) || return
 export LESS=$(c less_options)
 export EDITOR=$(c e)
 export VISUAL="$EDITOR"
+nul=/dev/null
 
 c setpath PATH "$HOME/bin" "$HOME/.local/bin" \
   /usr/local/bin /usr/local/sbin /usr/bin /usr/sbin /bin /sbin
