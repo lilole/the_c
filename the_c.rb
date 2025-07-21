@@ -380,7 +380,7 @@ module TheC
    #
   module Util
     extend TheC::Mixin::Util
-  end
+  end # Util
 
   ## Manage a tree of file nodes.
    #
@@ -1146,7 +1146,7 @@ module TheC
       file_tups = find_file_tuples
       return if file_tups.empty?
 
-      pool_sz = [file_tups.size, TheC::Util.cpu_count].min
+      pool_sz = 1 #[file_tups.size, TheC::Util.cpu_count].min
       my_actors = actor_list(pool_sz)
 
       resultq = Queue.new
