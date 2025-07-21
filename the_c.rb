@@ -37,6 +37,8 @@
  # - Follow the patterns here to tweak for your own env. All available
  #   features and their usage should become self evident from the patterns.
 
+require "digest/sha2"
+require "find"
 require "io/console"
 require "json"
 require "shellwords"
@@ -1121,6 +1123,157 @@ module TheC
       new_dirs.any? ? cmd : "true"
     end
   end # SetPath
+
+  class RecursiveHash
+    include Mixin::Output
+
+    RECORD = Struct.new(:path, :idx, :file, :sha, :sz, :et)
+
+    attr :paths, :sort
+
+    def initialize(paths, sort)
+      @paths = paths
+      @sort = sort
+      @last_reline = 0
+
+      if ! sort
+        pdirs = paths.map { File.dirname(it) }.uniq
+        @sort = pdirs.size < 2 ? :path : :hash
+      end
+    end
+
+    def run
+      file_tups = find_file_tuples
+      return if file_tups.empty?
+
+      pool_sz = [file_tups.size, TheC::Util.cpu_count].min
+      my_actors = actor_list(pool_sz)
+
+      resultq = Queue.new
+      recvers = my_actors.map do |my_actor|
+        Thread.new do
+          while (result = my_actor.receive)
+            path, idx, file, sha, sz, et = result
+            resultq.enq(RECORD.new(path, idx, file, sha, sz, et))
+          end
+        end
+      end
+
+      raw_recs = []
+      get_recs = Thread.new do
+        while (result = resultq.deq)
+          raw_recs << result
+          progress(result.file, raw_recs.size, file_tups.size)
+        end
+      end
+
+      progress(file_tups.first[2], 0, file_tups.size)
+      file_tups.each_with_index do |t, i|
+        my_actors[i % pool_sz].send(t)
+      end
+
+      my_actors.each(&:finish)
+      recvers.each(&:join)
+      resultq.close
+      get_recs.join
+      reline ""
+
+      rows = reconsolidate_records(raw_recs)
+      final_sort!(rows)
+      display(rows)
+    end
+
+    def display(rows)
+      width = paths.map(&:size).max
+      align = sort == :path ? "-" : ""
+      rows.each do |r|
+        m = r.sz / 1e6
+        puts("%s %#{align}#{width}s (%4.2fMB/%3.1fs = %4.2fMB/s)" % [
+          r.sha, r.path, m, r.et, m / r.et
+        ])
+      end
+    end
+
+    def final_sort!(rows)
+      if    sort == :hash then rows.sort! { |a, b| 2 * (a.sha <=> b.sha) + (a.path <=> b.path) }
+      elsif sort == :size then rows.sort! { |a, b| 2 * (b.sz <=> a.sz) + (a.path <=> b.path) }
+      elsif sort == :path
+        rows.sort! do |a, b|
+          a1, b1 = File.basename(a.path), File.basename(b.path)
+          a2, b2 = File.dirname(a.path), File.dirname(b.path)
+          2 * (a1 <=> b1) + (a2 <=> b2)
+        end
+      end
+    end
+
+    def reconsolidate_records(raw_recs)
+      shadig = Digest::SHA256.new
+      by_path = raw_recs.group_by { it.path }
+      rows = []
+      by_path.each do |path, raw_recs|
+        shadig.reset
+        sz = 0
+        et = 0.0
+        raw_recs.sort do |a, b|
+          a.idx <=> b.idx
+        end.each do
+          shadig << it.sha
+          sz += it.sz
+          et += it.et # TODO: THIS IS NOT RIGHT, need to use max/min start/stop ts
+        end
+        rows << RECORD.new(path, 0, 0, shadig.hexdigest, sz, et)
+      end
+      rows
+    end
+
+    def actor_list(pool_sz)
+      (0...pool_sz).map do
+        TheC::Practor.new.start do |actor|
+          shadig = Digest::SHA256.new
+          csz = 2**18 # 256K per actor
+          chunk = "".b
+          while (path, idx, file = actor.receive)
+            shadig.reset
+            sz = 0
+            et = Time.now
+            File.open(file, "rb") do |io|
+              while io.read(csz, chunk)
+                sz += chunk.size
+                shadig << chunk
+              end
+            end
+            et = Time.now - et
+            actor.send([path, idx, file, shadig.hexdigest, sz, et.to_f])
+          end
+        end
+      end
+    end
+
+    def find_file_tuples
+      files = []
+      paths.each_with_index do |path, idx|
+        stat = File.lstat(path)
+        unless stat.directory? || stat.file?
+          puterr("Skipping: Not a dir or file: #{path.inspect}")
+          next
+        end
+        Find.find(path).select do
+          File.lstat(it).file?
+        end.sort.each_with_index do |f, i|
+          files << [path, i, f]
+        end
+      end
+      files
+    end
+
+    def progress(file, index, total) = reline "%s (%d/%d)..." % [file, index, total]
+
+    def reline(msg)
+      c1, c2 = %W[\b \ ].map { it * @last_reline }
+      @last_reline = (msg[/\n([^\n]*)$/, 1] || msg).size
+      $stderr << c1 << c2 << c1 << msg
+    end
+  end # RecursiveHash
 
   ## Main Ruby entry points for bashrc code to use. This manages named pipes,
    # listens for input, and responds the output. This is designed to be a
@@ -2432,25 +2585,18 @@ module TheC
       end
 
       add :rh, "Recursive sha256 hash", ->(*args) do
-        cwd = Dir.pwd
-        paths = args.any? ? args : [cwd]
-        width = paths.map { File.basename(_1).size }.max
-
-        paths.each do |path|
-          if File.directory?(path)
-            Dir.chdir(path)
-            find = "."
-          elsif File.file?(path)
-            find = path
-          else
-            puterr "Skipping: Not a dir or file: #{path.inspect}"
-            next
-          end
-          print(File.basename(path).ljust(width + 1)); $stdout.flush
-          sum = bash("find #{find.shellescape} -type f | sort | xargs -d '\\n' cat | sha256sum -b", :errs).line
-          puts(sum ? sum[0, 64] : "")
-          Dir.chdir(cwd)
+        if args.any? { it =~ /^-[^-]*[h?]|^--help$/ }
+          puterr "\nUsage: rh [{--sort-hash|-H}|{--sort-path|-P}|{--sort-size|-S}] [PATHNAME ...]\n"
+          return false
         end
+
+        sort = nil
+        (opts = %w[-H --sort-hash]; args & opts).any? and (sort = :hash; args -= opts)
+        (opts = %w[-P --sort-path]; args & opts).any? and (sort = :path; args -= opts)
+        (opts = %w[-S --sort-size]; args & opts).any? and (sort = :size; args -= opts)
+        paths = args.any? ? args : [Dir.pwd]
+
+        TheC::RecursiveHash.new(paths, sort).run
         true
       end
 
