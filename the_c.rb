@@ -1127,7 +1127,7 @@ module TheC
   class RecursiveHash
     include Mixin::Output
 
-    RECORD = Struct.new(:path, :idx, :file, :sha, :sz, :et)
+    RECORD = Struct.new(:path, :idx, :file, :sha, :sz, :ts1, :ts2)
 
     attr :paths, :sort
 
@@ -1153,8 +1153,8 @@ module TheC
       recvers = my_actors.map do |my_actor|
         Thread.new do
           while (result = my_actor.receive)
-            path, idx, file, sha, sz, et = result
-            resultq.enq(RECORD.new(path, idx, file, sha, sz, et))
+            path, idx, file, sha, sz, ts1, ts2 = result
+            resultq.enq(RECORD.new(path, idx, file, sha, sz, ts1, ts2))
           end
         end
       end
@@ -1188,8 +1188,9 @@ module TheC
       align = sort == :path ? "-" : ""
       rows.each do |r|
         m = r.sz / 1e6
+        et = r.ts2 - r.ts1
         puts("%s %#{align}#{width}s (%4.2fMB/%3.1fs = %4.2fMB/s)" % [
-          r.sha, r.path, m, r.et, m / r.et
+          r.sha, r.path, m, et, m / et
         ])
       end
     end
@@ -1213,15 +1214,16 @@ module TheC
       by_path.each do |path, raw_recs|
         shadig.reset
         sz = 0
-        et = 0.0
+        ts1, ts2 = Float::INFINITY, 0.0
         raw_recs.sort do |a, b|
           a.idx <=> b.idx
         end.each do
           shadig << it.sha
           sz += it.sz
-          et += it.et # TODO: THIS IS NOT RIGHT, need to use max/min start/stop ts
+          ts1 = it.ts1 if it.ts1 < ts1
+          ts2 = it.ts2 if it.ts2 > ts2
         end
-        rows << RECORD.new(path, 0, 0, shadig.hexdigest, sz, et)
+        rows << RECORD.new(path, 0, 0, shadig.hexdigest, sz, ts1, ts2)
       end
       rows
     end
@@ -1235,15 +1237,15 @@ module TheC
           while (path, idx, file = actor.receive)
             shadig.reset
             sz = 0
-            et = Time.now
+            ts1 = Time.now.to_f
             File.open(file, "rb") do |io|
               while io.read(csz, chunk)
                 sz += chunk.size
                 shadig << chunk
               end
             end
-            et = Time.now - et
-            actor.send([path, idx, file, shadig.hexdigest, sz, et.to_f])
+            ts2 = Time.now.to_f
+            actor.send([path, idx, file, shadig.hexdigest, sz, ts1, ts2])
           end
         end
       end
