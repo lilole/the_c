@@ -1137,7 +1137,8 @@ module TheC
     attr :max_cpus, :paths, :sort
 
     ## Construct.
-     # @param paths The files or dirs to process.
+     # @param paths The files or dirs to process, as an Array of String, or a Hash
+     #    with each key as a dir and its values as Array of names within that dir.
      # @param sort How to sort final results. Use :path, :hash, :size, or nil. If
      #    nil, the sort is selected automatically by a heuristic, which is to sort
      #    by path if a basename in `paths` is used twice, otherwise sort by hash.
@@ -1146,7 +1147,13 @@ module TheC
      #    Any value is maxed at the machine CPU count.
      #
     def initialize(paths, sort, max_cpus: 2)
-      @paths = paths
+      if Hash === paths
+        @paths = paths.map { |dir, files| files.map { "#{dir}/#{it}" } }.flatten
+      elsif Array === paths
+        @paths = paths
+      else
+        raise "Invalid type for paths: Array or Hash is valid: #{paths.class}"
+      end
       @sort = sort
       if ! max_cpus || max_cpus < 1
         @max_cpus = TheC::Util.cpu_count
@@ -1165,7 +1172,7 @@ module TheC
 
       pool_sz = [max_cpus, file_tups.size].min
 
-      ## This is the STANDARD BASIC PATTERN for a pool of parallel workers.
+      ## This is the STANDARD BASIC PATTERN for a pool of parallel worker processes.
        #
        # Step 1: Instantiate a worker for each member of the pool, which will be
        #         assigned its own CPU, and possibly its own address space, and which
@@ -1360,7 +1367,7 @@ module TheC
      #
     def reline(msg)
       c1, c2 = %W[\b \ ].map { it * @last_reline }
-      @last_reline = (msg[/\n([^\n]*)$/, 1] || msg).size
+      @last_reline = (msg[/\n([^\n]*)\z/, 1] || msg).size
       $stderr << c1 << c2 << c1 << msg
     end
   end # RecursiveHash
@@ -2675,16 +2682,21 @@ module TheC
       end
 
       add :rh, "Recursive sha256 hash", ->(*args) do
-        if args.any? { it =~ /^-[^-]*[h?]|^--help$/ }
-          puterr "\nUsage: rh [{--sort-hash|-H}|{--sort-path|-P}|{--sort-size|-S}] [PATHNAME ...]\n"
-          return false
+        usage = -> do
+          puterr "\nUsage: rh [{--sort-hash|-H}|{--sort-path|-P}|{--sort-size|-S}] [[{--cd|-d} DIR] PATHNAME ...] ...\n"
+          false
         end
-
-        sort = nil
-        (opts = %w[-H --sort-hash]; args & opts).any? and (sort = :hash; args -= opts)
-        (opts = %w[-P --sort-path]; args & opts).any? and (sort = :path; args -= opts)
-        (opts = %w[-S --sort-size]; args & opts).any? and (sort = :size; args -= opts)
-        paths = args.any? ? args : [Dir.pwd]
+        sort = nil; cwd = "."; paths = Hash.new { |h, k| h[k] = [] }; idx = -1
+        while (arg = args[idx += 1])
+          c = 0
+          arg =~ /^-[^-]*[h?]|^--help$/   && c = 1 and return usage[]
+          arg =~ /^-[^-]*H|^--sort-hash$/ && c = 1 and sort = :hash
+          arg =~ /^-[^-]*P|^--sort-path$/ && c = 1 and sort = :path
+          arg =~ /^-[^-]*S|^--sort-size$/ && c = 1 and sort = :size
+          arg =~ /^-[^-]*d|^--cd$/        && c = 1 and cwd = args[idx += 1]
+          c == 0 and paths[cwd] << arg
+        end
+        paths["."].concat(Dir.children(".")) if paths.empty?
 
         TheC::RecursiveHash.new(paths, sort).run
         true
