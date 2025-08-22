@@ -41,6 +41,7 @@ require "digest/sha2"
 require "find"
 require "io/console"
 require "json"
+require "set"
 require "shellwords"
 require "stringio"
 
@@ -1148,7 +1149,7 @@ module TheC
      #
     def initialize(paths, sort, max_cpus: 2)
       if Hash === paths
-        @paths = paths.map { |dir, files| files.map { "#{dir}/#{it}" } }.flatten
+        @paths = paths.map { |dir, files| files.map { "#{dir}/#{_1}" } }.flatten
       elsif Array === paths
         @paths = paths
       else
@@ -1283,7 +1284,7 @@ module TheC
      #
     def ensure_sort(rows)
       return sort if sort
-      bnames = rows.map { File.basename(File.expand_path(it.path)) }
+      bnames = rows.map { File.basename(File.expand_path(_1.path)) }
       @sort = bnames.to_set.size < bnames.size ? :path : :hash
     end
 
@@ -1293,7 +1294,7 @@ module TheC
      #
     def reconsolidate_records(raw_recs)
       shadig = Digest::SHA256.new
-      by_path = raw_recs.group_by { it.path }
+      by_path = raw_recs.group_by { _1.path }
       rows = []
       by_path.each do |path, raw_recs|
         shadig.reset
@@ -1302,10 +1303,10 @@ module TheC
         raw_recs.sort do |a, b|
           a.idx <=> b.idx
         end.each do
-          shadig << it.sha
-          sz += it.sz
-          ts1 = it.ts1 if it.ts1 < ts1
-          ts2 = it.ts2 if it.ts2 > ts2
+          shadig << _1.sha
+          sz += _1.sz
+          ts1 = _1.ts1 if _1.ts1 < ts1
+          ts2 = _1.ts2 if _1.ts2 > ts2
         end
         rows << RECORD.new(path, 0, 0, shadig.hexdigest, sz, ts1, ts2)
       end
@@ -1351,7 +1352,7 @@ module TheC
           next
         end
         Find.find(path).select do
-          File.lstat(it).file?
+          File.lstat(_1).file?
         end.sort.each_with_index do |f, i|
           files << [path, i, f]
         end
@@ -1366,7 +1367,7 @@ module TheC
     ## Support rewriting the same terminal line for messages.
      #
     def reline(msg)
-      c1, c2 = %W[\b \ ].map { it * @last_reline }
+      c1, c2 = %W[\b \ ].map { _1 * @last_reline }
       @last_reline = (msg[/\n([^\n]*)\z/, 1] || msg).size
       $stderr << c1 << c2 << c1 << msg
     end
