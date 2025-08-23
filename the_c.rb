@@ -1903,7 +1903,7 @@ module TheC
           b:   "~/code/bash",
           f:   "~/shop/FLR",
           gh:  "~/code/gh",
-          pca: "~/var/AndroidStudioProjects/PreciousCargoAlert",
+          pca: "~/code/work/PreciousCargoAlert",
           r:   "~/code/rb",
           s:   "~/shop",
           t:   "~/tmp",
