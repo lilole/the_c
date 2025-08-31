@@ -2069,7 +2069,7 @@ module TheC
               lines = bash("#{base} --stat=500 #{path.shellescape}").lines
               summary = lines.last
               lines[0..-2].each do |line|
-                file = line.split(/ \| /)[0]&.[](1..-1)
+                file = line.split(/ +\| /)[0]&.[](1..-1)
                 if file && ! file.empty? && File.file?(file)
                   file_diff[file]
                 else
