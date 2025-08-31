@@ -1735,11 +1735,11 @@ module TheC
       def find_git_workspaces(dirs)
         dirs.map do |dir|
           root = cc(:proot, ".git", dir).line # Search up tree
-          if root.nil?
+          if root
+            roots = [root]
+          else
             roots = cc(:roots, ".git", dir).lines # Search down tree
             raise "Cannot find any git workspaces: #{dir.inspect}." if roots.empty?
-          else
-            roots = [root]
           end
           roots
         end.flatten
@@ -2055,25 +2055,25 @@ module TheC
           end
           paths.empty? and paths << "."
 
-          cmd = ->(file) do
+          base = "git diff --relative"
+          file_diff = ->(file) do
             o = opts.shelljoin; f = file.shellescape
-            "git diff #{o} #{f} && echo && git diff --stat=512 #{o} #{f}"
+            io.puts ""
+            bash("#{base} #{o} #{f} && echo && #{base} --stat=500 #{o} #{f}", echo: io)
           end
 
           paths.each do |path|
             if File.file?(path)
-              io.puts ""
-              bash(cmd[path], echo: io)
+              file_diff[path]
             else # Dir
-              lines = bash("git diff --stat=512 #{path.shellescape}").lines
+              lines = bash("#{base} --stat=500 #{path.shellescape}").lines
               summary = lines.last
               lines[0..-2].each do |line|
-                file = line.split[0]
-                if file.empty? || ! File.file?(file)
-                  io.puts "Warning: Ignoring output word: #{file.inspect}"
+                file = line.split(/ \| /)[0]&.[](1..-1)
+                if file && ! file.empty? && File.file?(file)
+                  file_diff[file]
                 else
-                  io.puts ""
-                  bash(cmd[file], echo: io)
+                  io.puts "Warning: Ignoring output word: #{file.inspect}"
                 end
               end
               io.puts "\nDir: #{path.inspect}: #{summary}"
@@ -2216,37 +2216,36 @@ module TheC
       end
 
       add :gs, "Smarter git status, handles git subdirs", ->(*args) do
-        # NOTE: You may need to run "git config --global --bool status.relativePaths false" so paths are correct here
-        usage = ->(msg) { puterr "#{msg}: Usage: gs [--quiet|-q] [[--dir|-d] DIR] ..."; return false }
-        dirs = []; verbose = true; argi = -1
-        while (arg = args[argi += 1])
-          arg =~ /^-[^-]*[h?]|^--help$/ and usage["Online help"]
-          if arg[0] == "-"
-            c = 0; i, a = arg[0..1] == "--" ? [arg.size, 0] : [1, 1] # TODO: Helper method for this
-            arg =~ /^-[^-]*d|^--dir$/   && c += i and dirs << args[argi += 1]
+        usage = ->(msg) { puterr "#{msg}: Usage: gs [--quiet|-q] [--] DIR ..."; false }
+        dirs = []; verbose = true; force = false; argi = -1
+        args.each do |arg|
+          arg == "--" and (force = true; next)
+          if arg[0] == "-" && ! force
+            c = 0; i, a = arg[0..1] == "--" ? [arg.size, 0] : [1, 1] # TODO: Make this standard boilerplate
             arg =~ /^-[^-]*q|^--quiet$/ && c += i and verbose = false
-            usage["Invalid opt: #{arg.inspect}"] if c < arg.size - a # TODO: See TODO 3 lines up
+            return usage["Invalid opt: #{arg.inspect}"] if c < arg.size - a
           else
             dirs << arg
           end
         end
-        dirs << "." if dirs.empty?
+        if dirs.empty?
+          raise "Cannot find workspace root" if ! (arg = cc(:proot, ".git").line)
+          dirs << arg
+        end
 
         page do |io|
           cwd_re = Regexp.escape(Dir.pwd)
           files = Hash.new { |h, k| h[k] = [] }
-
-          find_git_workspaces(dirs).each do |dir|
+          dirs.each do |dir|
             Dir.chdir(dir) do
               category = commits_ahead = on_branch = nil
               files.clear
-
               ran = bash("git status .")
               raise "git status failed: #{ran.out}" if ran.fail?
 
               ran.lines.each do |ln|
-                if    ln =~ /^\t/   then files[category] << ln.sub(/^\t+/) { " " * (_1.size * 4) }
-                elsif ln =~ /^.+:$/ then category = ln.gsub(/\s+/, "-")
+                if    ln =~ /^.+:$/ then category = ln.gsub(/\s+/, "-")
+                elsif ln =~ /^\t/   then files[category] << ln.sub(/^\t+/) { " " * (_1.size * 4) }
                 elsif ln =~ /^Not currently on any branch/ then on_branch = "NONE"
                 elsif ln =~ /^On branch (.+)/              then on_branch = $~[1]
                 elsif ln =~ /^Your branch is ahead of \S+ by (\d+)/ then commits_ahead = ", #{$~[1]} to push"
