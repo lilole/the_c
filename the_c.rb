@@ -1984,7 +1984,7 @@ module TheC
       add :e, "Start the preferred editor if given an arg, otherwise just print the editor command", ->(*args) do
         editors = [
           # In order of preference
-          { exe: "code-oss", args_if_params: "--reuse-window", skip_if_no_params: true },
+          { exe: "pulsar", skip_if_no_params: true },
           { exe: "vim" },
           { exe: "vi" }
         ]
