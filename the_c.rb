@@ -2650,33 +2650,24 @@ module TheC
       end
 
       add :rcp, "Propagate .bashrc to servers", ->(*args) do
-        if args.any?
-          names = args.dup
-        else
-          names = %w[
-            dan@homer:.bashrc pi@homer:.bashrc root@homer:.bashrc
-            dan@missybook:.bashrc root@missybook:.bashrc
-            dvr@dvr:dan.bashrc root@dvr:.bashrc
-          ]
+        args.empty? and args = %w[
+          dan@homer:.bashrc pi@homer:.bashrc root@homer:.bashrc
+          dan@missybook:.bashrc root@missybook:.bashrc
+          dvr@dvr:.bashrc root@dvr:.bashrc
+        ]
+        sources = %w[.bashrc .bashrc.the_c].map { "#{ENV["HOME"]}/#{_1}" }.select { File.exist?(_1) }
+        targets = args.map do |target|
+          target = "#{target}:hig.bashrc" if ! target.include?(":")
+          sources.map { target + File.extname(_1) }
         end
-
-        names.map! { |n| n.include?(":") ? n : "#{n}:hig.bashrc" }
-        width = names.map(&:size).max
-        source = "#{ENV["HOME"].shellescape}/.bashrc"
-
+        width = targets.flatten.map(&:size).max
         ok = true
-        names.each do |name|
-          label = "#{name} ".ljust(width + 4, ".")
-          print "#{label} "
-
-          if name[0] == "!"
-            puts "skipped."
-            next
+        targets.each do |tuple|
+          sources.zip(tuple).each do |source, target|
+            print("#{target} ".ljust(width + 4, ".") + " ")
+            ok &= ok2 = bash("scp -q #{source.shellescape} #{target.shellescape}", :errs).ok?
+            puts "OK." if ok2
           end
-
-          ok2 = bash("scp -q #{source} #{name.shellescape}", :errs).ok?
-          puts "OK." if ok2
-          ok &= ok2
         end
         ok
       end
