@@ -1899,16 +1899,18 @@ module TheC
 
       add :d, "Change dirs with various abbreviations", ->(*args) do
         map = {
-          c:   "~/code",
-          b:   "~/code/bash",
-          f:   "~/shop/FLR",
-          gh:  "~/code/gh",
-          pca: "~/code/work/PreciousCargoAlert",
-          r:   "~/code/rb",
-          s:   "~/shop",
-          t:   "~/tmp",
-          v:   "~/media/Video",
-          uNN: "(cd up NN dir levels)"
+          b:    "~/code/bash",
+          c:    "~/code",
+          d:    "~/drive/Truck",
+          f:    "~/shop/FLR",
+          gh:   "~/code/gh",
+          pca:  "~/code/work/pca_v2",
+          pca1: "~/code/work/PreciousCargoAlert",
+          r:    "~/code/rb",
+          s:    "~/shop",
+          t:    "~/tmp",
+          v:    "~/media/Video",
+          uNN:  "(cd up NN dir levels)"
         }.map { |k, v| [k.to_s, v.to_s.sub(/^~/, ENV["HOME"])] }.to_h
 
         dir = (args[0] =~ /^u(\d+)$/) ? ([".."] * $~[1].to_i).join("/") : map[args[0]]
