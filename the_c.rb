@@ -1904,8 +1904,6 @@ module TheC
           d:    "~/drive/Truck",
           f:    "~/shop/FLR",
           gh:   "~/code/gh",
-          pca:  "~/code/work/pca_v2",
-          pca1: "~/code/work/PreciousCargoAlert",
           r:    "~/code/rb",
           s:    "~/shop",
           t:    "~/tmp",
