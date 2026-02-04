@@ -2741,21 +2741,21 @@ module TheC
         result = nil
         if @upd == "pacman"
           if args[0] == "c"
-            result = "checkupdates #{args[1..-1].shelljoin} | #{c :m}"
+            result = "#{c :sudo} pacman -Sy && pacman -Qu #{args[1..-1].shelljoin} | #{c :m}"
           elsif args[0][0..1] == "-Q"
-            result = "#{c :sudo, @upd, *args} | #{c :m}"
+            result = "pacman #{args.shelljoin} | #{c :m}"
           end
         end
         result || c(:sudo, @upd, *args)
       end
 
-      add :ua, "Run aura", ->(*args) do
+      add :ua, "Run yay", ->(*args) do
         if args[0] == "c"
-          args = %w[-Auyd --log-level=info]
+          args = %w[-Quya]
         else
-          args = args.map { _1 =~ /^-S(.*)/ ? "-A#{$~[1]}" : _1 }
+          args = args.map { _1 =~ /^-([A-Z]([^a]+)?)$/ ? "-#{$~[1]}a" : _1 }
         end
-        "aura #{args.shelljoin}"
+        "yay #{args.shelljoin}"
       end
 
       add :ui, "Arch package details, --nn for max depth", ->(*args) do

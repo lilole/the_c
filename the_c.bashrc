@@ -75,7 +75,7 @@ fi
 c x journalctl && alias jc='c jc'
 c x uys        && alias pcc='uys pcc'
 c x systemctl  && alias sc='c sudo systemctl'
-c x aura       && alias ua='c ua'
+c x yay        && alias ua='c ua'
 if c x docker; then
   alias d='docker'
   alias dc='docker-compose'
