@@ -675,7 +675,7 @@ module TheC
 
             if cfg.path_only
               if matched
-                result << path
+                result << "#{path}\n"
                 break
               end
               next
