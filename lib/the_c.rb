@@ -47,11 +47,50 @@ require "stringio"
 
 module TheC
   VERSION = "2.6.40"
+
+  def self.bootstrap
+    dist_dir = "#{ENV["HOME"]}/.bashrc.the_c-#{VERSION}"
+
+    if ! File.directory?(dist_dir)
+      if ! defined?(::TheC_PackageData)
+        $stderr << "TheC.bootstrap: No package to uncompress, cannot load.\n"
+        return false
+      end
+
+      require "base64"
+      require "fileutils"
+      require "pathname"
+      require "zlib"
+
+      TheC_PackageData.delete_at(0).tr("\n", "")
+      .then { |package| Base64.urlsafe_decode64(package) }
+      .then { |package_z| Zlib::Inflate.inflate(package_z) }
+      .then { |package_raw| Marshal.load(package_raw) }
+      .then { |file_tups|
+        file_tups.each { |path, is_ln, mtime, data|
+          pn = Pathname.new("#{dist_dir}/#{path}")
+          FileUtils.mkdir_p(pn.parent.to_s)
+          if is_ln
+            pn.make_symlink(data)
+          else
+            pn.open("wb") { |io| io.write(data) }
+          end
+          FileUtils.touch(pn.to_s, mtime: Time.at(mtime))
+        }
+      }
+    end
+
+    require_relative "#{dist_dir}/aut_aut"
+    AutAut.setup(File.realpath(dist_dir))
+
+    Extensions.apply
+
+    TheC::Cli.new(ARGV)
+    true
+  rescue
+    $stderr << $!.full_message
+    false
+  end
 end
 
-require_relative "aut_aut"
-AutAut.setup(File.realpath(__dir__))
-
-Extensions.apply
-
-TheC::Cli.new(ARGV) if $0 == __FILE__
+# Stuff gets added below here, which integrates with the `bootstrap` method above...
