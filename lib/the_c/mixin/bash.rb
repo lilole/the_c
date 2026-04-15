@@ -1,5 +1,7 @@
 # frozen_string_literal: true
 
+require "stringio"
+
 module TheC
 module Mixin
   ## Easy ways to run `bash` scripts with full control of IO.

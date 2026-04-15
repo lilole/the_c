@@ -1,5 +1,7 @@
 # frozen_string_literal: true
 
+require "shellwords"
+
 module TheC
   class SetPath
     def usage(msg=nil, exit_code=1)

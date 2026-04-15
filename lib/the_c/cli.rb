@@ -1,5 +1,7 @@
 # frozen_string_literal: true
 
+require "shellwords"
+
 module TheC
   ## Main Ruby entry points for bashrc code to use. This manages named pipes,
    # listens for input, and responds the output. This is designed to be a

@@ -1,5 +1,9 @@
 # frozen_string_literal: true
 
+require "digest/sha2"
+require "find"
+require "set"
+
 module TheC
   ## Support comparing dir tree contents by recursively computing SHA256 hashes
    # of all files below given dirs. Using multi CPUs is supported as an option,

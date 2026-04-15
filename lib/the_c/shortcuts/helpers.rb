@@ -1,5 +1,8 @@
 # frozen_string_literal: true
 
+require "shellwords"
+require "stringio"
+
 module TheC
 module Shortcuts
   ## Helper methods for use by defined shortcuts, which may rely on context in

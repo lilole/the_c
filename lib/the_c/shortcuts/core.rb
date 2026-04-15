@@ -1,5 +1,8 @@
 # frozen_string_literal: true
 
+require "json"
+require "shellwords"
+
 module TheC
 module Shortcuts
   ## The actual shortcut definitions, which depend on the 1500+ lines above.

@@ -37,14 +37,6 @@
  # - Follow the patterns here to tweak for your own env. All available
  #   features and their usage should become self evident from the patterns.
 
-require "digest/sha2"
-require "find"
-require "io/console"
-require "json"
-require "set"
-require "shellwords"
-require "stringio"
-
 module TheC
   VERSION = "2.6.40"
 end
