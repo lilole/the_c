@@ -1,4 +1,7 @@
 
+require "base64"
+require "zlib"
+
 if (ARGV & %w[build deploy package]).any?
   # Special case, always reset this file since `package` modifies it
   touch "lib/#{arma.let :subject_file}"
@@ -46,16 +49,17 @@ task(package: %i[deploy]) { |t|
           ]
         }
       }.tap(&:compact!)
-      .then { |files| Marshal.dump(files) }
+      .then { |file_tups| Marshal.dump(file_tups) }
       .then { |package_raw| Zlib::Deflate.deflate(package_raw, Zlib::BEST_COMPRESSION) }
       .then { |package_z| Base64.urlsafe_encode64(package_z, padding: false) }
-      .tap { |package|
-        i = (package.size - 1) / 132
-        package.insert((i + 1) * 132, "\n") while (i -= 1) >= 0
+      .tap { |package_b64|
+        i = (package_b64.size - 1) / 132
+        package_b64.insert((i + 1) * 132, "\n") while (i -= 1) >= 0
       }
     end
 
-    File.read(final_file).lines.map! { |line|
+    File.read(final_file).lines
+    .map! { |line|
       if line =~ /^\s*#\{\{package_bootstrapper}}\s*$/
         File.read(bootstrapper_src)
       elsif line =~ /^\s*#\{\{package_data}}\s*$/
@@ -63,7 +67,8 @@ task(package: %i[deploy]) { |t|
       else
         line
       end
-    }.join.then { |body| File.write(final_file, body) }
+    }.join
+    .then { |body| File.write(final_file, body) }
 
     arma.log "Added #{package_b64.size} base64 bytes to #{final_file.inspect}."
     cp final_file, "."
