@@ -1,5 +1,5 @@
 # Sorry this is not public yet...
-load "../../rb/rockly/arma.rake"
+load "../ultisel/arma.rake"
 
 arma.let :subject_file, "the_c.rb"
 

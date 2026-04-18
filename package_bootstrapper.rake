@@ -37,7 +37,7 @@ task(package: %i[deploy]) { |t|
     }
 
     package_b64 = begin
-      Rly::FsTree.new(arma.dist_dir)
+      Ulse::FsTree.new(arma.dist_dir)
       .then { |tree|
         tree.nodes.map { |node|
           next nil if node.lstat.directory?
