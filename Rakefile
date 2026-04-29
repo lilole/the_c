@@ -1,5 +1,5 @@
 # Sorry this is not public yet...
-load "../ultisel/arma.rake"
+load "../ultisel/load/arma.rake"
 
 arma.plugin :Package,
   subject_root: "lib",
