@@ -1,7 +1,7 @@
 # Sorry this is not public yet...
 load "../ultisel/load/arma.rake"
 
-arma.import arma: "../ultisel", version: nil,
+arma.import arma: "../ultisel", version: nil, build: true,
   include: /^aut_aut\.rb/
 
 arma.plugin :Package,
