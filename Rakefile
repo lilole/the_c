@@ -2,7 +2,7 @@
 load "../ultisel/load/arma.rake"
 
 arma.import arma: "../ultisel", version: nil, build: true,
-  include: /^aut_aut\.rb/
+  include: arma.minimum_custom_includes
 
 arma.plugin :Package,
   subject_root: "lib",
@@ -12,7 +12,7 @@ arma.plugin :Package,
   END
   main_body: (<<~'END')
     require_relative "#{unpack_dir}/aut_aut"
-    AutAut.setup(File.realpath(unpack_dir))
+    AutAut.setup unpack_dir
     Extensions.apply
     TheC::Cli.new(ARGV)
   END
