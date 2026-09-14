@@ -386,8 +386,8 @@ module TheC
   ## Manage a tree of file nodes.
    #
   class FileNode
-    ## Configured filters when loading a node's subtree. An instance of this is
-     # passed to any block given to `FileNode.initialize`.
+    ## Configured filters when loading a node's subtree. An instance of this is passed to any block given to
+     # `FileNode.new`.
      #
     class Filters
       attr_reader :only, :prune, :skip
@@ -399,25 +399,20 @@ module TheC
        #
       def only!(*names_res_or_procs) = (@only = names_res_or_procs.flatten; self)
 
-      ## Allow no subtree for the given path matchers. Returns self.
-       # See `#only!` for matcher details.
+      ## Allow no subtree for the given path matchers. Returns self. See `#only!` for matcher details.
        #
       def prune!(*names_res_or_procs) = (@prune = names_res_or_procs.flatten; self)
 
-      ## Skip the given path matchers on the subtree. Returns self.
-       # See `#only!` for matcher details.
+      ## Skip the given path matchers on the subtree. Returns self. See `#only!` for matcher details.
        #
       def skip!(*names_res_or_procs) = (@skip = names_res_or_procs.flatten; self)
 
       def prune?(path) = prune&.any? { |arg| match?(arg, path) }
 
-      def skip?(path)
-        only&.none? { |arg| match?(arg, path) } ||
-          skip&.any? { |arg| match?(arg, path) }
-      end
+      def skip?(path) = only&.none? { |arg| match?(arg, path) } || skip&.any? { |arg| match?(arg, path) }
 
       def match?(arg, path)
-        if    String === arg then arg == File.basename(path)
+        if    String === arg then arg.b == File.basename(path)
         elsif Regexp === arg then arg.match?(path)
         elsif Proc === arg   then !! arg[path]
         else  raise "Only Proc, Regexp, or String is valid: #{arg.inspect}"
@@ -425,15 +420,16 @@ module TheC
       end
     end # Filters
 
+    PATH_END_CRUD_RE = %r`/+\s*\z`
+
     attr_reader :children, :filters, :path, :stat
 
-    ## Typical usage is a given pathname, and if any filtering is needed then
-     # pass a block that calls any combination of `Filters#only!`,
-     # `Filters#prune!`, and `Filters.skip!`.
+    ## Typical usage is a given pathname, and if any filtering is needed then pass a block that calls any combination
+     # of `Filters#only!`, `Filters#prune!`, and `Filters.skip!`.
      #
     def initialize(pathname, filters: nil, &filters_config)
-      @path    = (pathname =~ %r`\A[/.]` ? +"" : +"./") << pathname.sub(%r`/\s*\z`, "")
-      @filters = filters || Filters.new
+      @path     = pathname.b.sub(PATH_END_CRUD_RE, "")
+      @filters  = filters || Filters.new
       @children = []
       @stat     = File.lstat(path)
       yield(@filters) if filters_config
@@ -446,8 +442,8 @@ module TheC
       ind = indent_str * level
       name = (level == 0) ? path.dup : File.basename(path)
       name << "/" if dir?
-      text = +"#{ind}#{name}\n"
-      text << children.sort.map { |child| child.to_tree(level + 1, indent_str: indent_str) }.join
+      text = "#{ind}#{name}\n".b
+      text << children.sort.map { |child| child.to_tree(level + 1, indent_str:) }.join
     end
 
     ## The number of bytes in this node's subtree.
@@ -460,7 +456,7 @@ module TheC
 
     ## Convert the entire node tree to an array of pathnames.
      #
-    def to_a = children.map { |child| child.to_a }.flatten << self
+    def to_a = @to_a ||= children.reduce([]) { |arr, child| arr.concat(child.to_a) } << self
 
     ## Make default sort have directory nodes above file nodes.
      #
@@ -468,8 +464,7 @@ module TheC
       a, b = self, other
       a_dir = a.dir? ? 1 : 0
       b_dir = b.dir? ? 1 : 0
-      2 * (a_dir <=> b_dir) +
-        (a.path <=> b.path)
+      2 * (a_dir <=> b_dir) + (a.path <=> b.path)
     end
 
     def dir? = stat.directory?
@@ -477,10 +472,11 @@ module TheC
     private \
     def load!
       if dir? && ! filters.prune?(path)
-        Dir.glob("#{path}/*", File::FNM_DOTMATCH).each do |sub_path|
-          next if filters.skip?(sub_path) || sub_path.end_with?("/.") || sub_path.end_with?("/..")
-          children << FileNode.new(sub_path, filters: filters)
-        end
+        Dir.children(path, encoding: 'binary').each { |sub_name|
+          sub_path = File.join(path, sub_name)
+          next if filters.skip?(sub_path)
+          children << FileNode.new(sub_path, filters:)
+        }
       end
       self
     end
