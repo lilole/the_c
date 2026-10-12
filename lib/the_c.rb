@@ -4,38 +4,36 @@
 # Copyright 2024-2026 Dan Higgins
 # SPDX-License-Identifier: Apache-2.0
 
-## Every shell shortcut macro/script/tool in a single block of Ruby code.
- #
- # Notes:
- # - Requires Ruby 3.1+ and Linux.
- # - This is meant to be used in a bashrc to work alongside a custom "c"
- #   function. For an example see:
- #     https://github.com/lilole/the_c/blob/main/the_c.bashrc
- # - Defined Ruby shortcuts MUST return one of these standard types:
- #   - `nil`.......Reports a nop to the caller.
- #   - `String`....A bit of bash code to evaluate in the caller's context.
- #   - `Integer`...Return the value as an exit code to the caller.
- #   - truthy......Reports a success to the caller.
- #   - falsey......Reports a failure to the caller.
- # - This is designed to be a local command service, by starting up in the
- #   background and communicating with clients by named pipes. This design is
- #   crazy fast but also puts some constraints on the code for I/O.
- # - Shortcut worker methods MUST accept an `io` param if they need to output
- #   results to the tty. The `io` param may simply turn out to be `$stdout`,
- #   but the worker method MUST NOT assume it writes to `$stdout`.
- # - In general shortcuts should only use `$stderr` for info messages to user.
- # - In general shortcuts should try first to return a String that would be
- #   evaluated as bash code in the caller's context. This is the best way to
- #   ensure that shortcuts can call other shortcuts, and can even be used in
- #   pipelines of shortcuts.
- # - It's safe for shortcuts to raise error for any abrupt/abnormal end
- #   condition. The main handler code here will catch all exceptions,
- #   including `SystemExit`, and display the `Error` object's message.
- # - The `:m` shortcut is a special case, because the `page` helper method
- #   uses it internally for cases where large amounts of data may need to be
- #   viewed.
- # - Follow the patterns here to tweak for your own env. All available
- #   features and their usage should become self evident from the patterns.
+=begin
+  Every shell shortcut macro/script/tool in Ruby code.
+
+  Notes:
+  - Requires Ruby 3.1+ and Linux.
+
+  - This is meant to be used in a bashrc to work alongside a builtin "c" function. For an example see:
+      https://github.com/lilole/the_c/blob/main/the_c.bashrc
+
+  - This is designed as a local command service, by starting up in the background and communicating with clients by
+    named pipes. This design is crazy fast but requires special care to handle I/O.
+
+  - Shortcuts ALWAYS return a String value to evaluate in the caller shell. This value may be a bit of bash code that
+    processes stdin and updates stdout, or a bash keyword like `true` or `false` to signal success or failure.
+
+  - Shortcuts MUST accept exactly 1 param, to be an instance of TheC::ShortcutParams. This object has some helper
+    methods and 4 attrs: args, stdin, stdout, stderr. The first attr is the list of args given on the command line, and
+    the other 3 attrs are substitute IO objects for $stdin, $stdout, and $stderr set for each specific shortcut's run.
+
+  - Shortcuts MUST NOT assume that $stdin, $stdout, or $stderr are valid IO objects; they MUST NOT be touched.
+
+  - Remember that shortcuts may call other shortcuts, and may even be used in pipelines of shortcuts.
+
+  - It's safe for shortcuts to raise error for any abrupt/abnormal end condition. The main handler code will catch all
+    exceptions, including `SystemExit`, and display the `Error` object's message.
+
+  - The shortcuts are defined in `lib/the_c/shortcuts/core.rb`, and the reusable helper methods are in
+    `lib/the_c/shortcuts/helpers.rb`. Follow the patterns here to tweak for your own env. All available features and
+    their usage should become self evident from the patterns.
+=end
 
 module TheC
   VERSION = "2.6.40"

@@ -15,7 +15,7 @@ module TheC
 
     RECORD = Struct.new(:path, :idx, :file, :sha, :sz, :ts1, :ts2)
 
-    attr :max_cpus, :paths, :sort
+    attr :max_cpus, :paths, :sort, :stdout
 
     ## Construct.
      # @param paths The files or dirs to process, as an Array of String, or a Hash
@@ -27,7 +27,7 @@ module TheC
      #    If nil or < 1, then use the max possible value for the machine.
      #    Any value is maxed at the machine CPU count.
      #
-    def initialize(paths, sort, max_cpus: 2)
+    def initialize(paths, sort, stdout=$stdout, max_cpus: 2)
       if Hash === paths
         @paths = paths.map { |dir, files| files.map { "#{dir}/#{_1}" } }.flatten
       elsif Array === paths
@@ -36,6 +36,7 @@ module TheC
         raise "Invalid type for paths: Array or Hash is valid: #{paths.class}"
       end
       @sort = sort
+      @stdout = stdout
       if ! max_cpus || max_cpus < 1
         @max_cpus = TheC::Util.cpu_count
       else
@@ -139,7 +140,7 @@ module TheC
       rows.each do |r|
         m = r.sz / 1e6
         et = r.ts2 - r.ts1
-        puts("%s %#{align}#{width}s (%4.2fMB/%3.1fs = %4.2fMB/s)" % [
+        stdout.puts("%s %#{align}#{width}s (%4.2fMB/%3.1fs = %4.2fMB/s)" % [
           r.sha, r.path, m, et, m / et
         ])
       end
@@ -249,7 +250,7 @@ module TheC
     def reline(msg)
       c1, c2 = %W[\b \ ].map { _1 * @last_reline }
       @last_reline = (msg[/\n([^\n]*)\z/, 1] || msg).size
-      $stderr << c1 << c2 << c1 << msg
+      stdout << c1 << c2 << c1 << msg
     end
   end
 end

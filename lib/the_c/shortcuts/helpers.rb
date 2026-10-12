@@ -13,7 +13,7 @@ module Shortcuts
 
     ## Instance access to the names added with the `add` DSL method.
      #
-    def added_names = self.class.added_names
+    def added_names = Dsl::AddedNames
 
     ## The internal Rubyized `c` function, which calls shortcuts previously
      # defined with `add` from within Ruby code. Return values are forced to
@@ -62,6 +62,25 @@ module Shortcuts
       end.compact.tap do
         encodes.each { eval(_1) }
       end
+    end
+
+    def page_cmd
+      cmd = %w[less pg more].detect { |c| executable?(c) } || "cat"
+      cmd == "less" ? "less #{less_opts}" : cmd
+    end
+
+    def run_dir
+      @run_dir ||= begin
+        begin
+          PackageBootstrapper.unpack_dir
+        rescue
+          File.expand_path("#{__dir__}/../..")
+        end
+      end
+    end
+
+    def executable?(filename)
+      ENV["PATH"].split(":").any? { |d| File.executable?(File.join(d, filename)) }
     end
 
     ## Ensure the given result is safe for `eval` to run it in bash. This logic

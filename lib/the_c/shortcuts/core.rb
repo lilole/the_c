@@ -5,54 +5,51 @@ require "shellwords"
 
 module TheC
 module Shortcuts
-  ## The actual shortcut definitions, which depend on the 1500+ lines above.
+  ## The actual shortcut definitions.
    #
   class Core
     include Dsl
     include Helpers
 
-    add :at_home, "Return success if the current machine is Dan's home one", ->(*args) do
+    add :at_home, "Return success if the current machine is Dan's home one" do |sc|
       "[[ $HOSTNAME == danbook.danamis.com ]]"
     end
 
-    add :at_work, "Return success if the current machine is Dan's work one", ->(*args) do
+    add :at_work, "Return success if the current machine is Dan's work one" do |sc|
       "[[ $HOSTNAME == zzzdhiggins-vm ]]"
     end
 
-    add :be, "Shorthand 'bundle exec'", ->(*args) do
-      "bundle exec #{args.shelljoin}"
+    add :be, "Shorthand 'bundle exec'" do |sc|
+      "bundle exec #{sc.args.shelljoin}"
     end
 
-    add :cole, "Join given strings with ANSI color seqs", ->(*args) do
-      if args.empty?
-        usage = <<~END
-          Usage:
-            cole {CODE|STRING} ...
-          Where:
-            CODE => One of:
-                {{LIST}}
-            STRING => Not a CODE, any other String value to include.
-        END
+    add :cole, "Join given strings with ANSI color seqs" do |sc|
+      return "echo #{color_escape(sc.args).shellescape}" if sc.args.any?
 
-        keys  = @color_escape.keys
-        width = keys.map(&:size).max
-        list  = begin
-          keys.each_slice(4).map do |codes|
-            codes.map do |code|
-              tail = code == codes.last ? "" : "," + " " * (width + 1 - code.size)
-              "#{code}#{tail}"
-            end.join
-          end.join(",\n" + " " * 6)
-        end
-
-        puterr(usage.sub("{{LIST}}", list), nolf: true)
-        exit(1)
+      keys  = @color_escape.keys
+      width = keys.map(&:size).max
+      list  = begin
+        keys.each_slice(4).map { |codes|
+          codes.map { |code|
+            tail = code == codes.last ? "" : "," + " " * (width + 1 - code.size)
+            "#{code}#{tail}"
+          }.join
+        }.join(",\n" + " " * 6)
       end
 
-      "echo #{color_escape(args).shellescape}"
+      usage = (<<~END).sub("{{LIST}}", list)
+        Usage:
+          cole {CODE|STRING} ...
+        Where:
+          CODE => One of:
+              {{LIST}}
+          STRING => Not a CODE, any other String value to include.
+      END
+      sc.stderr << usage
+      "false"
     end
 
-    add :d, "Change dirs with various abbreviations", ->(*args) do
+    add :d, "Change dirs with various abbreviations" do |sc|
       map = {
         b:    "~/code/bash",
         c:    "~/code",
@@ -66,288 +63,294 @@ module Shortcuts
         uNN:  "(cd up NN dir levels)"
       }.map { |k, v| [k.to_s, v.to_s.sub(/^~/, ENV["HOME"])] }.to_h
 
-      dir = (args[0] =~ /^u(\d+)$/) ? ([".."] * $~[1].to_i).join("/") : map[args[0]]
+      dir = (sc.args[0] =~ /^u(\d+)$/) ? ([".."] * $~[1].to_i).join("/") : map[sc.args[0]]
       if ! dir
-        width = map.values.map(&:size).max
-        puterr "Valid abbrevs:"
-        map.sort { |a, b| a[1] <=> b[1] }.each do |abbrev, dir|
-          puterr "  %s %s" % ["#{dir} ".ljust(width + 4, "."), abbrev]
-        end
-        puterr "Examples:\n  $ c d r mp4* # cd to matched subdir\n  $ ls -l `c d v` # List without cd"
-        exit(1)
+        tmpfile = sc.tmpfile { |io|
+          width = map.values.map(&:size).max
+          io << "Valid abbrevs:\n"
+          map.sort { |a, b| a[1] <=> b[1] }.each { |abbrev, dir|
+            io << "  %s %s\n" % ["#{dir} ".ljust(width + 4, "."), abbrev]
+          }
+          io << "Examples:\n  $ c d r mp4* # cd to matched subdir\n  $ ls -l `c d v` # List without cd\n"
+        }
+        return "cat >&2 #{tmpfile}"
       end
 
-      subs = args[1..-1].join("/")
+      subs = sc.args[1..-1].join("/")
       subs.empty? or dir = Dir.glob("#{dir}/#{subs}").first || "#{dir}/#{subs}"
 
       "cd #{dir.shellescape} && pwd"
     end
 
-    add :dc, "File diff with colors and paging", ->(*args) do
-      page { |io| bash("diff -U5 --color=always #{args.shelljoin}", echo: io) }
+    add :dc, "File diff with colors and paging" do |sc|
+      "diff -U5 --color=always #{sc.args.shelljoin} | #{page_cmd}"
     end
 
-    add :dns, "Test homer DNS server", ->(*args) do
-      return false if cc(:at_home).fail?
+    add :dns, "Test homer DNS server" do |sc|
+      return "echo >&2 'c dns: Must be at home' && false" if cc(:at_home).fail?
 
-      name = args[0] || "goo.gl"
+      name = sc.args[0] || "goo.gl"
       hr = "_" * 80
 
-      page do |io|
-        for rec in %w[A AAAA]
-          for ipv, server in [%w[4 192.168.0.2], %w[6 2002:d1f0:3363:10:dea6:32ff:fe18:36db]]
-            for flag in %w[notcp tcp]
-              args = "#{name} #{rec} +#{flag} -#{ipv} @#{server}"
-              io.puts("\n#{hr}\n+ dig #{args}")
-              bash("dig #{args}", echo: io).ok? or return false
+      tmpfile = sc.tmpfile { |io|
+        catch(:stop) {
+          for rec in %w[A AAAA]
+            for ipv, server in [%w[4 192.168.0.2], %w[6 2002:d1f0:3363:10:dea6:32ff:fe18:36db]]
+              for flag in %w[notcp tcp]
+                io << "\n#{hr}\n+ dig #{args}\n"
+                args = %W[dig #{name} #{rec} +#{flag} -#{ipv} @#{server}]
+                ok = system(*args, out: io, err: io)
+                throw :stop if ! ok
+              end
             end
           end
-        end
+        }
+      }
+      "#{page_cmd} #{tmpfile}"
+    end
+
+    add :ds, "Create a new Docker container as a bg service" do |sc|
+      sc.puts "\nName:  ", nl: :none; name  = sc.gets.chomp
+      sc.puts "\nImage: ", nl: :none; image = sc.gets.chomp
+      ports = []
+      until nil
+        sc.puts "\nPort maps (HOST:CONTAINER[/udp], - when done): ", nl: :none
+        v = sc.gets.chomp
+        break if v == "-"
+        ports << v
       end
+      envs = []
+      until nil
+        sc.puts "\nEnv var (NAME='VALUE', - when done): ", nl: :none
+        v = sc.gets.chomp
+        break if v == "-"
+        envs << v
+      end
+      args = %W[
+        docker run --log-driver local --log-opt max-size=2m --log-opt max-file=2
+          --detach --restart unless-stopped --tty --name #{name}
+      ]
+      envs.each  { |v| args << "--env" << v }
+      ports.each { |v| args << "--publish" << v }
+      args << image
+      sc.puts "\nRun: #{args.shelljoin}"
+      ask_continue("OK?", "yn") ? args.shelljoin : "false"
     end
 
-    add :ds, "Create a new Docker container as a bg service", ->(*args) do
-      foreground_run <<~'END'
-        puterr "\nName:  ", nolf: true; name  = gets.chomp
-        puterr "\nImage: ", nolf: true; image = gets.chomp
-        ports = []
-        loop do
-          puterr "\nPort maps (HOST:CONTAINER[/udp], - when done): ", nolf: true
-          v = gets.chomp
-          break if v == "-"
-          ports << v
-        end
-        envs = []
-        loop do
-          puterr "\nEnv var (NAME='VALUE', - when done): ", nolf: true
-          v = gets.chomp
-          break if v == "-"
-          envs << v
-        end
-        args = %W[
-          docker run --log-driver local --log-opt max-size=2m --log-opt max-file=2
-            --detach --restart unless-stopped --tty --name #{name}
-        ]
-        envs.each  { |v| args << "--env" << v }
-        ports.each { |v| args << "--publish" << v }
-        args << image
-        puterr "\nRun: #{args.shelljoin}"
-        ask_continue("OK?", "yn") ? args.shelljoin : true
-      END
-    end
-
-    add :e, "Start the preferred editor if given an arg, otherwise just print the editor command", ->(*args) do
+    add :e, "Start the preferred editor if given an arg, otherwise just print the editor command" do |sc|
       editors = [
         # In order of preference
-        { exe: "pulsar", skip_if_no_params: true },
+        { exe: "vscodium-electron", skip_if_no_params: true },
         { exe: "vim" },
         { exe: "vi" }
       ]
-      found = editors.detect do |tup|
-        if    args.none? && tup[:skip_if_no_params] then false
-        elsif cc(:x, tup[:exe]).ok?                 then true
+      found = editors.detect { |props|
+        if    sc.args.none? && props[:skip_if_no_params] then false
+        elsif executable?(props[:exe])                   then true
         else  false
         end
-      end
+      }
       if ! found
-        false
-      elsif args.any?
+        "false"
+      elsif sc.args.any?
+        args = sc.args.map { |a| File.realpath(a) rescue a }
         [found[:exe], found[:args_if_params], args.shelljoin].compact.join(" ")
       else
-        words = [found[:exe], found[:args_if_no_params]].compact.shelljoin
-        "echo #{words}"
+        args = [found[:exe], found[:args_if_no_params]].compact
+        "echo #{args.shelljoin}"
       end
     end
 
-    add :ff, "Find paths matching regex", ->(*args) do
-      page { |io| Ffg::Cli.new(args, io: io).run }
+    add :ff, "Find paths matching regex" do |sc|
+      tmpfile = sc.tmpfile { |io|
+        Thread.new { Ffg::Cli.new(sc.args, io: io).run }
+      }
+      sleep 0.075 until File.readable?(tmpfile)
+      "#{pager_cmd} #{tmpfile}"
     end
 
-    add :fg, "Find regex in files", ->(*args) do
-      page { |io| Ffg::Cli.new(%w[--fg] + args, io: io).run }
+    add :fg, "Find regex in files" do |sc|
+      tmpfile = sc.tmpfile { |io|
+        Thread.new { Ffg::Cli.new(%w[--fg].concat(sc.args), io: io).run }
+      }
+      sleep 0.075 until File.readable?(tmpfile)
+      "#{pager_cmd} #{tmpfile}"
     end
 
-    add :gb, "Print current branch, or match first regex branch", ->(*args) do
-      re = nil; verbose = false
+    add :gb, "Print current branch, or match first regex branch" do |sc|
       usage = ->(msg) { raise "#{msg}: Usage: gb [-v] [regex]" }
-      args.each do |arg|
+      re = nil; verbose = false
+      sc.args.each { |arg|
         if    arg =~ /^-[^-]*[h?]|^--help$/ then usage["Online help"]
         elsif arg == "-v"                   then verbose = true
         elsif ! re                          then re = arg
         else  usage["Invalid arg: #{arg.inspect}"]
         end
-      end
-      brs = bash("git branch").lines.grep(re ? Regexp.new(re) : /^/)
-      re or brs = brs.grep(/^\*/) # Current branch
+      }
+      brs = bash("git branch").lines.grep(re ? Regexp.new(re) : /^\*/) # Current branch if no user re
       brs.map! { |ln| ln[2..-1] }
       br = brs[0]
       if brs.size == 1 && br != "(no branch)" # Success iff exactly 1 match
         "echo #{br.shellescape}"
       else
-        verbose and puterr "Branch regex '#{re}' did not match exactly once: #{brs.inspect}"
-        false
+        verbose and sc.pute "Branch regex '#{re}' did not match exactly once: #{brs.inspect}"
+        "false"
       end
     end
 
-    add :gcb, "Checkout first branch whose name matches given regex", ->(*args) do
-      (re = args[0]) or raise "Regex is required."
+    add :gcb, "Checkout first branch whose name matches given regex" do |sc|
+      (re = sc.args[0]) or raise "Regex is required."
       if (branch = cc(:gb, "-v", re, :errs).line)
         "git checkout #{branch.shellescape}"
       else
-        false
+        "false"
       end
     end
 
-    add :gd, "Smarter git diff, includes stats for each file", ->(*args) do
-      page do |io|
-        opts = %w[--color=always]; paths = []; force = false
-        args.each do |arg|
-          if    arg == "--"                             then force = true; next
-          elsif arg[0] == "-" && ! force                then opts << arg
-          elsif File.directory?(arg) || File.file?(arg) then paths << arg
-          else  io.puts "Warning: Ignoring arg: #{arg.inspect}"
-          end
+    add :gd, "Smarter git diff, includes stats for each file" do |sc|
+      opts = %w[--color=always]; paths = []; force = false
+      sc.args.each { |arg|
+        if    arg == "--"                             then force = true; next
+        elsif arg[0] == "-" && ! force                then opts << arg
+        elsif File.directory?(arg) || File.file?(arg) then paths << arg
+        else  sc.puts "Warning: Ignoring arg: #{arg.inspect}"
         end
-        paths.empty? and paths << "."
+      }
+      paths.empty? and paths << "."
 
-        base = "git diff --relative"
-        file_diff = ->(file) do
-          o = opts.shelljoin; f = file.shellescape
-          io.puts ""
-          bash("#{base} #{o} #{f} && echo && #{base} --stat=500 #{o} #{f}", echo: io)
-        end
+      base = "git diff --relative"
+      file_diff = ->(file) {
+        o = opts.shelljoin; f = file.shellescape
+        sc.puts ""
+        bash("#{base} #{o} #{f} && echo && #{base} --stat=500 #{o} #{f}", echo: sc.stdout)
+      }
 
-        paths.each do |path|
-          if File.file?(path)
-            file_diff[path]
-          else # Dir
-            lines = bash("#{base} --stat=500 #{path.shellescape}").lines
-            summary = lines.last
-            lines[0..-2].each do |line|
-              file = line.split(/ +\| /)[0]&.[](1..-1)
-              if file && ! file.empty? && File.file?(file)
-                file_diff[file]
-              else
-                io.puts "Warning: Ignoring output word: #{file.inspect}"
-              end
+      paths.each { |path|
+        if File.file?(path)
+          file_diff[path]
+        else # Dir
+          lines = bash("#{base} --stat=500 #{path.shellescape}").lines
+          summary = lines.last
+          lines[0..-2].each { |line|
+            file = line.split(/ +\| /)[0]&.[](1..-1)
+            if file && ! file.empty? && File.file?(file)
+              file_diff[file]
+            else
+              sc.puts "Warning: Ignoring output word: #{file.inspect}"
             end
-            io.puts "\nDir: #{path.inspect}: #{summary}"
-          end
+          }
+          sc.puts "\nDir: #{path.inspect}: #{summary}"
         end
-      end
+      }
+      "true"
     end
 
-    add :gdb, "Delete branch matching regex, with confirmation", ->(*args) do
-      code = <<~'END'
-        usage = ->(msg) { raise "#{msg}: Usage: gdb [--local|-l] REGEX" }
-
-        local = false; re = nil
-        args.each do |arg|
-          if    arg =~ /^-[^-]*l|^--local$/ then local = true
-          elsif ! re then re = arg
-          else  usage["Invalid arg: #{arg.inspect}"]
-          end
+    add :gdb, "Delete branch matching regex, with confirmation" do |sc|
+      usage = ->(msg) { raise "#{msg}: Usage: gdb [--local|-l] REGEX" }
+      local = false; re = nil
+      sc.args.each { |arg|
+        if    arg =~ /^-[^-]*l|^--local$/ then local = true
+        elsif ! re then re = arg
+        else  usage["Invalid arg: #{arg.inspect}"]
         end
-        usage["Regex is required"] if ! re
+      }
+      usage["Regex is required"] if ! re
 
-        br = cc(:gb, "-v", re, :errs).line or return false
-        cmds = []
-        cmds << "git push origin :#{br.shellescape}" if ! local
-        cmds << "git branch -D #{br.shellescape}"
-        cmds << "git fetch --prune"
+      br = cc(:gb, "-v", re, :errs).line or return "false"
+      cmds = []
+      cmds << "git push origin :#{br.shellescape}" if ! local
+      cmds << "git branch -D #{br.shellescape}"
+      cmds << "git fetch --prune"
 
-        if ! ask_continue "Run: #{cmds.join(" && ")} ?", "yn"
-          $stderr.puts "Skipped."
-          return false
-        end
-
-        cmds.each do |cmd|
-          $stderr.puts "\n+ #{cmd}"
-          ran = bash(cmd)
-          $stderr.puts ran.out
-          return false if ran.fail?
-        end
-
-        true
-      END
-      foreground_run(code, "args", args)
+      return "echo Skipped. && false" if ! ask_continue("Run: #{cmds.join(" && ")} ?", "yn")
+      cmds.each { |cmd|
+        sc.puts "\n+ #{cmd}"
+        ran = bash(cmd)
+        sc.puts ran.out
+        return "false" if ran.fail?
+      }
+      "true"
     end
 
-    add :gg, "Git gui", ->(*args) do
+    add :gg, "Git gui" do |sc|
       '({ out="$(meld . 2>&1)" || echo "$out"; } &)'
     end
 
-    add :glb, "List branches matching regex, or all by default", ->(*args) do
-      re = Regexp.new(args.shift || "^")
-      dirs = args.any? ? args : ["."]
-      page do |io|
-        find_git_workspaces(dirs).each do |dir|
-          Dir.chdir(dir) do
-            ran = bash("git branch -vv")
-            lines = ran.ok? ? ran.lines.grep(re).join("\n") : ran.out
-            lines = "(No matches.)" if lines.empty?
-            io.puts "\n#{dir}\n#{lines}"
-          end
-        end
-      end
+    add :glb, "List branches matching regex, or all by default" do |sc|
+      re = Regexp.new(sc.args.shift || "^")
+      dirs = sc.args.any? ? sc.args : ["."]
+      tmpfile = sc.tmpfile { |io|
+        Thread.new {
+          find_git_workspaces(dirs).each { |dir|
+            Dir.chdir(dir) {
+              ran = bash("git branch -vv")
+              lines = ran.ok? ? ran.lines.grep(re).join("\n") : ran.out
+              lines = "(No matches.)" if lines.empty?
+              io.puts "\n#{dir}\n#{lines}"
+            }
+          }
+        }
+      }
+      sleep 0.075 until File.readable?(tmpfile)
+      "#{page_cmd} #{tmpfile}"
     end
 
-    add :gmm, "Refresh and merge regex match of ARGV[0] or master/main down to current branch", ->(*args) do
+    add :gmm, "Refresh and merge regex match of ARGV[0] or master/main down to current branch" do |sc|
       this_br = cc(:gb, "-v", :errs).line
-      return false if ! this_br
+      return "false" if ! this_br
 
       if (other_br = args[0])
         other_br = cc(:gb, "-v", other_br, :errs).line
-        return false if ! other_br
+        return "false" if ! other_br
       else
         other_br = cc(:gb, "-v", " (master|main)$").line
         if ! other_br
-          puts "Cannot find default branch."
-          return false
+          sc.puts "Cannot find default branch."
+          return "false"
         end
       end
 
-      puts "Merging #{other_br.inspect} down to #{this_br.inspect}..."
+      sc.puts "Merging #{other_br.inspect} down to #{this_br.inspect}..."
       [
         "git pull",
         "git checkout #{other_br.shellescape}", "git pull",
         "git checkout #{this_br.shellescape}",
         "git merge -X ignore-space-change #{other_br.shellescape}"
-      ].each do |cmd|
-        puts "\n+ #{cmd}"
-        bash(cmd, :echo).ok? or return false
-      end
-      true
+      ].each { |cmd|
+        sc.puts "\n+ #{cmd}"
+        bash(cmd, echo: sc.stdout).ok? or return "false"
+      }
+      "true"
     end
 
-    add :gmu, "Refresh and merge current branch up to regex match of ARGV[0] branch", ->(*args) do
-      if ! (other_br = args[0])
-        puts "Upper branch name is required."
-        return false
+    add :gmu, "Refresh and merge current branch up to regex match of ARGV[0] branch" do |sc|
+      if ! (other_br = sc.args[0])
+        sc.puts "Upper branch name is required."
+        return "false"
       end
 
       other_br = cc(:gb, "-v", other_br, :errs).line
-      return false if ! other_br
+      return "false" if ! other_br
 
       this_br = cc(:gb, "-v", :errs).line
-      return false if ! this_br
+      return "false" if ! this_br
 
-      puts "Merging #{this_br.inspect} up to #{other_br.inspect}..."
+      sc.puts "Merging #{this_br.inspect} up to #{other_br.inspect}..."
       [
         "git pull",
         "git checkout #{other_br.shellescape}", "git pull",
         "git merge -X ignore-space-change #{this_br.shellescape}"
-      ].each do |cmd|
-        puts "\n+ #{cmd}"
-        bash(cmd, :echo).ok? or return false
-      end
-      true
+      ].each { |cmd|
+        sc.puts "\n+ #{cmd}"
+        bash(cmd, echo: sc.stdout).ok? or return "false"
+      }
+      "true"
     end
 
-    add :gnb, "Create new branch named ARGV[0] off of regex match of ARGV[1] or current branch", ->(*args) do
-      if ! (new_br = args[0])
-        puts "Usage: gnb NEW_BRANCH [BASE]"
-        return false
+    add :gnb, "Create new branch named ARGV[0] off of regex match of ARGV[1] or current branch" do |sc|
+      if ! (new_br = sc.args[0])
+        sc.puts "Usage: gnb NEW_BRANCH [BASE]"
+        return "false"
       end
 
       if (base = args[1])
@@ -355,25 +358,25 @@ module Shortcuts
       else
         base = cc(:gb, "-v", :errs).line
       end
-      return false if ! base
+      return "false" if ! base
 
-      puts "Creating new branch #{new_br.inspect} based on #{base.inspect}..."
+      sc.puts "Creating new branch #{new_br.inspect} based on #{base.inspect}..."
       [
         "git pull",
         "git checkout #{base.shellescape}", "git pull",
         "git checkout -b #{new_br.shellescape}",
         "git push -u origin HEAD"
-      ].each do |cmd|
-        puts "\n+ #{cmd}"
-        bash(cmd, :echo).ok? or return false
-      end
-      true
+      ].each { |cmd|
+        sc.puts "\n+ #{cmd}"
+        bash(cmd, echo: sc.stdout).ok? or return false
+      }
+      "true"
     end
 
-    add :gs, "Smarter git status, handles git subdirs", ->(*args) do
-      usage = ->(msg) { puterr "#{msg}: Usage: gs [--quiet|-q] [--] DIR ..."; false }
+    add :gs, "Smarter git status, handles git subdirs" do |sc|
+      usage = ->(msg) { sc.pute "#{msg}: Usage: gs [--quiet|-q] [--] DIR ..."; "false" }
       dirs = []; verbose = true; force = false; argi = -1
-      args.each do |arg|
+      sc.args.each { |arg|
         arg == "--" and (force = true; next)
         if arg[0] == "-" && ! force
           c = 0; i, a = arg[0..1] == "--" ? [arg.size, 0] : [1, 1] # TODO: Make this standard boilerplate
@@ -382,17 +385,17 @@ module Shortcuts
         else
           dirs << arg
         end
-      end
+      }
       if dirs.empty?
         raise "Cannot find workspace root" if ! (arg = cc(:proot, ".git").line)
         dirs << arg
       end
 
-      page do |io|
+      tmpfile = sc.tmpfile { |io| Thread.new {
         cwd_re = Regexp.escape(Dir.pwd)
         files = Hash.new { |h, k| h[k] = [] }
-        dirs.each do |dir|
-          Dir.chdir(dir) do
+        dirs.each { |dir|
+          Dir.chdir(dir) {
             category = commits_ahead = on_branch = nil
             files.clear
             ran = bash("git status .")
@@ -412,30 +415,32 @@ module Shortcuts
             file_lines = files.keys.sort.map { |cat| cat + "\n" << files[cat].join("\n") }.join("\n")
 
             io << "\n#{dir}#{msg}:\n#{file_lines}\n"
-          end
-        end
-      end
+          }
+        }
+      } }
+      sleep 0.075 until File.readable?(tmpfile)
+      "#{page_cmd} #{tmpfile}"
     end
 
-    add :gu, "Smarter git update, handles git subdirs", ->(*args) do
-      usage = ->(msg) { puterr "#{msg}: Usage: gu [--other-branch|-b] [[--dir|-d] DIR] ..."; return false }
+    add :gu, "Smarter git update, handles git subdirs" do |sc|
+      usage = ->(msg) { sc.pute "#{msg}: Usage: gu [--other-branch|-b] [[--dir|-d] DIR] ..."; "false" }
       dirs = []; other_branch = nil; argi = -1
-      while (arg = args[argi += 1])
-        arg =~ /^-[^-]*[h?]|^--help$/ and usage["Online help"]
+      while (arg = sc.args[argi += 1])
+        arg =~ /^-[^-]*[h?]|^--help$/ and return usage["Online help"]
         if arg[0] == "-"
           c = 0; i, a = arg[0..1] == "--" ? [arg.size, 0] : [1, 1] # TODO: Helper method for this
           arg =~ /^-[^-]*b|^--other-branch$/ && c += i and other_branch = args[argi += 1]
           arg =~ /^-[^-]*d|^--dir$/          && c += i and dirs << args[argi += 1]
-          usage["Invalid opt: #{arg.inspect}"] if c < arg.size - a # TODO: See TODO 3 lines up
+          return usage["Invalid opt: #{arg.inspect}"] if c < arg.size - a
         else
           dirs << arg
         end
       end
       dirs << "." if dirs.empty?
 
-      page do |io|
-        find_git_workspaces(dirs).each do |dir|
-          Dir.chdir(dir) do
+      tmpfile = sc.tmpfile { |io| Thread.new {
+        find_git_workspaces(dirs).each { |dir|
+          Dir.chdir(dir) {
             io << "\n#{dir}"
 
             cur_branch = cc(:gb).line
@@ -464,46 +469,49 @@ module Shortcuts
                 next if bash("git pull origin #{other_branch.shellescape}", echo: io).fail?
               end
             end
-          end
-        end
-      end
+          }
+        }
+      } }
+      sleep 0.075 until File.readable?(tmpfile)
+      "#{page_cmd} #{tmpfile}"
     end
 
-    add :h, "Dan's safe history wrapper", ->(*args) do
-      if args[0] =~ /^s/
+    add :h, "Dan's safe history wrapper" do |sc|
+      usage = -> { sc.pute "Usage: h {s[ave]|l[oad]}"; "false" }
+      if sc.args[0] =~ /^s/
         flags = %w[a]
         msg = "History saved to '$HISTFILE'."
-      elsif args[0] =~ /^l/
+      elsif sc.args[0] =~ /^l/
         flags = %w[a c r]
         msg = "History loaded from '$HISTFILE'."
       else
-        puterr "Usage: h {s[ave]|l[oad]}"
-        return false
+        return usage[]
       end
       cmd = flags.map { |f| "history -#{f}" }.join(" && ")
       "#{cmd} && echo #{msg.shellescape}"
     end
 
-    add :hum, "Stop hum noise on the Alienware machine", ->(*args) do
+    add :hum, "Stop hum noise on the Alienware machine" do |sc|
       "echo 0 | #{c :sudo, "tee", "/sys/module/snd_hda_intel/parameters/power_save"}"
     end
 
-    add :jc, "Run journalctl our way", ->(*args) do
+    add :jc, "Run journalctl our way" do |sc|
       less = "#{less_opts} +G"
-      args = %W[env SYSTEMD_PAGER=less SYSTEMD_LESS=#{less} journalctl --no-hostname] + args
+      args = %W[env SYSTEMD_PAGER=less SYSTEMD_LESS=#{less} journalctl --no-hostname] + sc.args
       args.member?("--user") ? args.shelljoin : c(:sudo, *args)
     end
 
-    add :l, "Run ls the preferred way", ->(*args) do
-      "ls -alF --group-directories-first --block-size=\"'1\" --color=always #{args.shelljoin} 2>&1 | #{c :m}"
+    add :l, "Run ls the preferred way" do |sc|
+      "LANG=C ls -alF --group-directories-first --block-size=\\'1 --color=always #{sc.args.shelljoin}" \
+        " |& #{c :m}"
     end
 
-    add :lc, "Load predefined text into clipboard", ->(*args) do
+    add :lc, "Load predefined text into clipboard" do |sc|
       clips = {
         "rb0" => (<<~END),
           # frozen_string_literal: true
           #
-          # Copyright 2024 Dan Higgins
+          # Copyright 2026 Dan Higgins
           # SPDX-License-Identifier: Apache-2.0
 
         END
@@ -529,54 +537,54 @@ module Shortcuts
         END
       }
 
-      name = args[0]; clip = clips[name]
+      name = sc.args[0]; clip = clips[name]
       if ! clip
-        puterr "Usage: CLIP_NAME\nWhere: CLIP_NAME <= #{clips.keys.sort}"
-        return false
+        sc.pute "Usage: CLIP_NAME\nWhere: CLIP_NAME <= #{clips.keys.sort}"
+        return "false"
       end
 
       one_line = clip.inspect.gsub("$", "\\\\$") # We need this because `.shellescape` leaves LFs
 
       "echo -e #{one_line} | xclip -in -rmlastnl -selection clipboard" \
-        " && echo " + "Loaded clip: #{name.inspect}".shellescape
+        " && echo #{"Loaded clip: #{name.inspect}".shellescape}"
     end
 
-    add :less_options, "The standard opts for `less`", ->(*args) do
+    add :less_options, "The standard opts for `less`" do |sc|
       "echo #{less_opts.shellescape}"
     end
 
-    add :m, "Run 'more' style viewer the preferred way", ->(*args) do
-      "less #{less_opts} #{args.shelljoin}"
+    add :m, "Run 'more' style viewer the preferred way" do |sc|
+      "less #{less_opts} #{sc.args.shelljoin}"
     end
 
-    add :mi, "Probe media info", ->(*args) do
+    add :mi, "Probe media info" do |sc|
       files = []; full = help = nil; idx = -1
-      while (arg = args[idx += 1])
+      while (arg = sc.args[idx += 1])
         arg =~ /^-[^-]*[h?]|^--help$/ and help = true
         arg =~ /^-[^-]*f|^--full$/    and full = true
         arg[0] != "-" and files << arg
       end
       help ||= files.empty? || ! files.all? { File.readable?(_1) }
       if help
-        puterr(<<~END)
+        sc.pute(<<~END)
           Usage: mi [--full|-f] FILE ...
           Where:
             -f, --full => Show all discovered media params as raw JSON.
                 Default is to show common params.
         END
-        return false
+        return "false"
       end
       subject = {}
       detect = ->(*names) { subject[names.detect { |n| subject[n] }] || "?" }
-      to_num = ->(*names) do
+      to_num = ->(*names) {
         s = detect[*names].strip
         f = (a, b = s[/\A([\d.]+)[^\d.]+([\d.]+)\z/, 1, 2].map(&:to_f); a / b) rescue Float::NAN
         f.nan? ? s.to_f : f
-      end
+      }
       with_num = ->(*names) { "#{commafy(to_num[*names].round(3))} (#{detect[*names]})" }
       with_kbps = ->(*names) { "#{commafy((to_num[*names] / 1000).round)} Kbps (#{detect[*names]})" }
       with_time = ->(*names) { n = to_num[*names].round; "#{n / 60}m #{n % 60}s (#{detect[*names]})" }
-      common = ->(json) do
+      common = ->(json) {
         hash = JSON.parse(json); text = +""
         for stream in hash["streams"]
           subject.clear.merge!(stream)
@@ -626,51 +634,43 @@ module Shortcuts
             Duration: #{with_time["duration"]}
             Bitrate:  #{with_kbps["bit_rate"]}
         END
-      end
+      }
       script = "ffprobe -hide_banner -loglevel quiet -print_format json" \
         " -show_format -show_streams -show_chapters -analyzeduration #{4 * 3600 * 10**6}"
-      page do |io|
+      tmpfile = sc.tmpfile { |io| Thread.new {
         for file in files
           io.puts "\n+ #{file.inspect}"; gb = 10**9
           sz = (v = File.size(file)) > 16*gb ? v / 4 : (v > 8*gb ? v / 2 : (v > 4*gb ? 4*gb : v))
           raw = `#{script} -probesize #{sz} #{file.shellescape}`.strip
           io.puts(full ? raw : common[raw])
         end
-      end
+      } }
+      sleep 0.075 until File.readable?(tmpfile)
+      "#{page_cmd} #{tmpfile}"
     end
 
-    add :need_screen, "Return success if on a tty at home", ->(*args) do
+    add :need_screen, "Return success if on a tty at home" do |sc|
       "#{c :at_home} && #{c :x, "screen"}" \
         " && [[ ! $WINDIR && $USER == dan && $(tty) == /dev/tty[12] ]]"
     end
 
-    add :need_x, "Return success if startx should be run", ->(*args) do
+    add :need_x, "Return success if startx should be run" do |sc|
       "(#{c :at_home} || #{c :at_work})" \
         " && [[ ! $WINDIR && $USER == dan && $(tty) == /dev/tty1 ]]" \
         " && ! pgrep '^X(org)?$' &> /dev/null"
     end
 
-    add :o, "Open files in their default viewer apps", ->(*args) do
-      if args.empty?
-        puterr "No files given."
-        return false
-      end
+    add :o, "Open files in their default viewer apps" do |sc|
+      err = ->(msg) { sc.pute msg; "false" }
+      return err["No files given."] if sc.args.empty?
+      return err["Not configured for file viewer in this env."] if ! executable?("xdg-open")
 
-      if cc(:x, "xdg-open").fail?
-        puterr "Not configured for file viewer in this env."
-        return false
-      end
-
-      rans = args.map { |f| bash("xdg-open #{f.shellescape}") }
-      if rans.any?(&:fail?)
-        puterr args.zip(rans.map(&:out)).map { |pair| pair.join("\n") }.join("\n\n")
-        return false
-      end
-      true
+      sc.args.each { |f| spawn("xdg-open #{f.shellescape}", out: sc.stdout, err: sc.stderr) }
+      "true"
     end
 
-    add :pd, "Dan's smart pushd/popd wrapper", ->(*args) do
-      s = args[0].to_s; n = s.to_i
+    add :pd, "Dan's smart pushd/popd wrapper" do |sc|
+      s = sc.args[0].to_s; n = s.to_i
       if    s.empty?       then "dirs"
       elsif s =~ /^-\d+$/  then "popd +#{-n - 1}"
       elsif s =~ /^\+\d+$/ then "pushd +#{n - 1}"
@@ -678,11 +678,11 @@ module Shortcuts
       end
     end
 
-    add :proot, "Detect path to parent dir containing named subdir.", ->(*args) do
-      name = args[0]
+    add :proot, "Detect path to parent dir containing named subdir." do |sc|
+      name = sc.args[0]
       raise "Name of subdir to search is required." if ! name
 
-      parent = File.realpath(args[1] || Dir.pwd)
+      parent = File.realpath(sc.args[1] || Dir.pwd)
 
       until File.directory?(File.join(parent, name))
         parent == "/" and (parent = ""; break)
@@ -692,7 +692,7 @@ module Shortcuts
       "echo #{parent.shellescape}"
     end
 
-    add :ps1, "Generate fancy xterm PS1 value", ->(*args) do
+    add :ps1, "Generate fancy xterm PS1 value" do |sc|
       ps1_helper.check_last_user
       ps1_helper.ps1 ||= begin
         # Set the full PS1 contents here.
@@ -709,9 +709,9 @@ module Shortcuts
         end
 
         subs = { "uname" => ps1_helper.uname_wrap }
-        %w[blink fbcyan fbgreen fbmagenta fbred fbwhite fbyellow nblink reset].each do |label|
+        %w[blink fbcyan fbgreen fbmagenta fbred fbwhite fbyellow nblink reset].each { |label|
           subs[label] = color_escape([label])
-        end
+        }
 
         ps1 = template.gsub(/\{\{\w+\}\}/) { |str| subs[str[2..-3]] }
 
@@ -719,11 +719,11 @@ module Shortcuts
       end
     end
 
-    add :ps1_git_details, "Display super abbreviated current git repo info", ->(*args) do
-      ps1_helper.x_git = cc(:x, "git").ok? if ps1_helper.x_git.nil?
-      ps1_helper.x_git or return nil
+    add :ps1_git_details, "Display super abbreviated current git repo info" do |sc|
+      ps1_helper.x_git = executable?("git") if ps1_helper.x_git.nil?
+      ps1_helper.x_git or return ":"
 
-      branch = cc(:gb).line or return nil
+      branch = cc(:gb).line or return ":"
       status = bash("git status").lines
       bits = +""
       bits << "!" if status.any? { _1.include?("modified:") }
@@ -733,49 +733,50 @@ module Shortcuts
       bits << "*" if status.any? { _1.include?("Your branch is ahead of") }
       bits << ">" if status.any? { _1.include?("renamed:") }
       bits.empty? or bits.insert(0, " ")
-      +"echo " << " [#{branch}#{bits}]".shellescape
+      "echo #{" [#{branch}#{bits}]".shellescape}"
     end
 
-    add :ps1_last_rc_save, "Save the last command exit code in a shared place for later", ->(*args) do
+    add :ps1_last_rc_save, "Save the last command exit code in a shared place for later" do |sc|
       (rc = ENV["THE_C_LAST_RC"]) and ps1_helper.last_rc = rc
-      nil
+      ":"
     end
 
-    add :ps1_last_rc_show, "Display the last command exit code, saved before", ->(*args) do
+    add :ps1_last_rc_show, "Display the last command exit code, saved before" do |sc|
       rc = ps1_helper.last_rc
-      (rc && rc != "0") ? "echo \\ #{rc}" : nil
+      (rc && rc != "0") ? "echo \\ #{rc}" : ":"
     end
 
-    add :psg, "Find processes", ->(*args) do
-      regex = Regexp.new(args[0] || "^", "i")
+    add :psg, "Find processes" do |sc|
+      regex = Regexp.new(sc.args[0] || "^", "i")
       lines = begin
         bash("ps -ewwH -o sid,pgid,ppid,pid,uid,tty,stat,cmd").lines
-          .map.with_index do |ln, i|
-            if i == 0
-              color_escape(%W[fbgreen #{ln} reset])
-            elsif regex.match?(ln)
-              color_matches(ln, regex, "fbyellow")
-            else
-              nil
-            end
-          end.compact
+        .map.with_index { |ln, i|
+          if i == 0
+            color_escape(%W[fbgreen #{ln} reset])
+          elsif regex.match?(ln)
+            color_matches(ln, regex, "fbyellow")
+          else
+            nil
+          end
+        }.compact
       end
-      page("+G") { |io| io.puts lines.join("\n") }
+      tmpfile = sc.tmpfile { |io| io.puts lines.join("\n") }
+      "#{c :m} +G #{tmpfile}"
     end
 
-    add :psync, "Sync abs pathnames from current / to matched ones below ROOT/ subdirs", ->(*args) do
+    add :psync, "Sync abs pathnames from current / to matched ones below ROOT/ subdirs" do |sc|
       roots = cc(:roots, "ROOT").lines.map { "#{_1}/ROOT" }
       if roots.empty?
-        puterr "Abs paths to sync must be created below 'ROOT/' subdirs."
-        return false
+        sc.pute "Abs paths to sync must be created below 'ROOT/' subdirs."
+        return "false"
       end
 
-      page do |io|
+      tmpfile = sc.tmpfile { |io|
         for root in roots
           io.puts "\n#{"_" * 80}\nProcess relative root: #{root.inspect}"
 
           paths = strout { |sio| Ffg::Cli.new([root, "."], io: sio).run }.split("\n").sort
-          paths.each do |path|
+          paths.each { |path|
             apath = path[root.size .. -1]
 
             if ! File.exist?(apath)
@@ -793,130 +794,135 @@ module Shortcuts
             end
 
             io.puts "Syncing:\t\t#{apath}"
-            bash("cp #{eapath} #{epath}", errs: io).ok? or return false
-          end
+            bash("cp #{eapath} #{epath}", errs: io).ok? or return "false"
+          }
         end
-        true
-      end
+      }
+      "#{page_cmd} #{tmpfile}"
     end
 
-    add :rce, "Edit ~/code/bash/bashrc", ->(*args) do
+    add :rce, "Edit ~/code/bash/bashrc" do |sc|
       c(:e, "#{ENV["HOME"]}/code/bash/bashrc")
     end
 
-    add :rcp, "Propagate .bashrc to servers", ->(*args) do
-      args.empty? and args = %w[
+    add :rcp, "Propagate .bashrc to servers" do |sc|
+      (args = sc.args).empty? and args = %w[
         dan@homer:.bashrc pi@homer:.bashrc root@homer:.bashrc
         dan@missybook:.bashrc root@missybook:.bashrc
         dvr@dvr:.bashrc root@dvr:.bashrc
       ]
       sources = %w[.bashrc .bashrc.the_c].map { "#{ENV["HOME"]}/#{_1}" }.select { File.exist?(_1) }
-      targets = args.map do |target|
+      targets = args.map { |target|
         target = "#{target}:hig.bashrc" if ! target.include?(":")
         sources.map { target + File.extname(_1) }
-      end
+      }
       width = targets.flatten.map(&:size).max
       ok = true
-      targets.each do |tuple|
-        sources.zip(tuple).each do |source, target|
-          print("#{target} ".ljust(width + 4, ".") + " ")
-          ok &= ok2 = bash("scp -q #{source.shellescape} #{target.shellescape}", :errs).ok?
-          puts "OK." if ok2
-        end
-      end
-      ok
+      targets.each { |tuple|
+        sources.zip(tuple).each { |source, target|
+          sc.puts("#{target} ".ljust(width + 4, ".") + " ", nl: :none)
+          ok2 = bash("scp -q #{source.shellescape} #{target.shellescape}", errs: sc.stdout).ok?
+          sc.puts "OK." if ok2
+          ok &&= ok2
+        }
+      }
+      ok.to_s
     end
 
-    add :rh, "Recursive sha256 hash", ->(*args) do
-      usage = -> do
-        puterr "\nUsage: rh [{--sort-hash|-H}|{--sort-path|-P}|{--sort-size|-S}] [[{--cd|-d} DIR] PATHNAME ...] ...\n"
-        false
-      end
+    add :rh, "Recursive sha256 hash" do |sc|
+      usage = -> {
+        sc.pute "\nUsage: rh [{--sort-hash|-H}|{--sort-path|-P}|{--sort-size|-S}] [[{--cd|-d} DIR] PATHNAME ...] ...\n"
+        "false"
+      }
       sort = nil; cwd = "."; paths = Hash.new { |h, k| h[k] = [] }; idx = -1
-      while (arg = args[idx += 1])
+      while (arg = sc.args[idx += 1])
         c = 0
         arg =~ /^-[^-]*[h?]|^--help$/   && c = 1 and return usage[]
         arg =~ /^-[^-]*H|^--sort-hash$/ && c = 1 and sort = :hash
         arg =~ /^-[^-]*P|^--sort-path$/ && c = 1 and sort = :path
         arg =~ /^-[^-]*S|^--sort-size$/ && c = 1 and sort = :size
-        arg =~ /^-[^-]*d|^--cd$/        && c = 1 and cwd = args[idx += 1]
+        arg =~ /^-[^-]*d|^--cd$/        && c = 1 and cwd = sc.args[idx += 1]
         c == 0 and paths[cwd] << arg
       end
       paths["."].concat(Dir.children(".")) if paths.empty?
 
-      TheC::RecursiveHash.new(paths, sort).run
-      true
+      TheC::RecursiveHash.new(paths, sort, sc.stdout).run
+      "true"
     end
 
-    add :rl, "Recursive listing of files or dirs, sortable by date or size or count", ->(*args) do
-      page { |io| RecursiveList.new.run(args, io: io) }
+    add :rl, "Recursive listing of files or dirs, sortable by date or size or count" do |sc|
+      tmpfile = sc.tmpfile { |io|
+        Thread.new {
+          RecursiveList.new.run(sc.args, io: io)
+        }
+      }
+      sleep 0.075 until File.readable?(tmpfile)
+      "#{page_cmd} #{tmpfile}"
     end
 
-    add :roots, "Select roots of dir trees containing a named subdir", ->(*args) do
-      dirs = strout { |io| Roots.new.run(args, io: io) }
+    add :roots, "Select roots of dir trees containing a named subdir" do |sc|
+      dirs = strout { |io| Roots.new.run(sc.args, io: io) }
       dirs = dirs.inspect.gsub("$", "\\\\$") # Safe one-line value, which `.shellescape` does not make
       "echo -en #{dirs}"
     end
 
-    add :sce, "Edit ~/.ssh/config", ->(*args) do
+    add :sce, "Edit ~/.ssh/config" do |sc|
       c(:e, "#{ENV["HOME"]}/.ssh/config")
     end
 
-    add :scl, "List ~/.ssh/config defined hosts", ->(*args) do
+    add :scl, "List ~/.ssh/config defined hosts" do |sc|
       matches = begin
         File.read("#{ENV["HOME"]}/.ssh/config")
-          .lines
-          .grep(/^\s*Host\b/)
-          .map(&:lstrip)
-          .sort
+        .lines
+        .grep(/^\s*Host\b/)
+        .map(&:lstrip)
+        .sort
       end
-
-      page { |io| io.puts matches.join }
+      tmpfile = sc.tmpfile { |io| io.puts matches.join }
+      "#{page_cmd} #{tmpfile}"
     end
 
-    add :setpath, "Clever path manipulator, guarantees proper ordering and deduping", ->(*args) do
-      SetPath.new.run(args) # Returns bash code to eval
+    add :setpath, "Clever path manipulator, guarantees proper ordering and deduping" do |sc|
+      SetPath.new.run(sc.args) # Returns bash code to eval
     end
 
-    add :sudo, "Run sudo only if needed", ->(*args) do
-      if cc(:x, "sudo").ok? && ENV["USER"] != "root"
-        args = %w[sudo] + args
-      end
-      args.shelljoin
+    add :sudo, "Run sudo only if needed" do |sc|
+      sc.args = %w[sudo] + sc.args if executable?("sudo") && ENV["USER"] != "root"
+      sc.args.shelljoin
     end
 
-    add :u, "Run system updater", ->(*args) do
-      @upd ||= %w[pacman yum apt apt-get].detect { cc(:x, _1).ok? }
+    add :u, "Run system updater" do |sc|
+      @upd ||= %w[pacman dnf yum apt apt-get].detect { executable?(_1) }
 
       if ! @upd
-        puterr "No system updater found."
-        return false
+        sc.pute "No system updater found."
+        return "false"
       end
 
       result = nil
       if @upd == "pacman"
-        if args[0] == "c"
-          result = "#{c :sudo} pacman -Sy && pacman -Qu #{args[1..-1].shelljoin} | #{c :m}"
-        elsif args[0][0..1] == "-Q"
-          result = "pacman #{args.shelljoin} | #{c :m}"
+        if sc.args[0] == "c"
+          result = "#{c :sudo} pacman -Sy && pacman -Qu #{sc.args[1..-1].shelljoin} | #{c :m}"
+        elsif sc.args[0][0..1] == "-Q"
+          result = "pacman #{sc.args.shelljoin} | #{c :m}"
         end
       end
-      result || c(:sudo, @upd, *args)
+      result || c(:sudo, @upd, *sc.args)
     end
 
-    add :ua, "Run yay", ->(*args) do
-      if args[0] == "c"
-        args = %w[-Quya]
+    add :ua, "Run yay" do |sc|
+      if sc.args[0] == "c"
+        sc.args = %w[-Quya]
       else
-        args = args.map { _1 =~ /^-([A-Z]([^a]+)?)$/ ? "-#{$~[1]}a" : _1 }
+        sc.args = sc.args.map { _1 =~ /^-([A-Z]([^a]+)?)$/ ? "-#{$~[1]}a" : _1 }
       end
-      "yay #{args.shelljoin}"
+      "yay #{sc.args.shelljoin}"
     end
 
-    add :ui, "Arch package details, --nn for max depth", ->(*args) do
+    add :ui, "Arch package details, --nn for max depth" do |sc|
       depth = "2"
-      page do |io|
-        args.each do |arg|
+      tmpfile = sc.tmpfile { |io| Thread.new {
+        sc.args.each { |arg|
           if arg =~ /^--(\d+)$/
             depth = $~[1]
             next
@@ -925,43 +931,43 @@ module Shortcuts
           out = bash(script).lines.map(&:rstrip).reject(&:empty?).uniq.join("\n")
           io.puts "\n#{out}"
           bash("pactree -rd#{depth} #{arg.shellescape}", echo: io)
-        end
-      end
+        }
+      } }
+      sleep 0.075 until File.readable?(tmpfile)
+      "#{page_cmd} #{tmpfile}"
     end
 
-    add :vb, "View binary files", ->(*args) do
+    add :vb, "View binary files" do |sc|
       cmd = "od -Ad -tx1z -w30"
-
-      if args.empty? || args.member?("-")
-        "#{cmd} - | #{c :m}"
-      else
-        page do |io|
-          args.each do |file|
+      return "#{cmd} - | #{c :m}" if sc.args.empty? || sc.args.member?("-")
+      tmpfile = sc.tmpfile { |io|
+        Thread.new {
+          sc.args.each { |file|
             io << "\n+ #{file.inspect}\n" if args.size > 1
             bash("#{cmd} #{file.shellescape}", echo: io)
-          end
-        end
-      end
-    end
-
-    add :x, "Are all given commands executable", ->(*args) do
-      args.all? { |c| bash("type #{c.shellescape}").ok? }
-    end
-
-    add :zzz, "Fallback base case if subcommand is unknown", ->(*args) do
-      tbl = {
-        idxs: 0...3,
-        cmd:  %w[ git  svn cvs],
-        dir:  %w[.git .svn CVS]
+          }
+        }
       }
+      sleep 0.075 until File.readable?(tmpfile)
+      "#{page_cmd} #{tmpfile}"
+    end
 
-      idx = tbl[:idxs].detect { |i| cc(:x, tbl[:cmd][i]).ok? && cc(:proot, tbl[:dir][i]).line }
+    add :x, "Are all given commands executable" do |sc|
+      sc.args.all? { |c| executable?(c) }
+    end
 
-      if idx
-        "#{tbl[:cmd][idx]} #{args.shelljoin}"
+    add :zzz, "Fallback base case if subcommand is unknown" do |sc|
+      tbl = [
+        { cmd: "git", dir: ".git" },
+        { cmd: "svn", dir: ".svn" },
+        { cmd: "cvs", dir: "CVS" }
+      ]
+      row = tbl.detect { |r| executable?(r[:cmd]) && cc(:proot, r[:dir]).line }
+      if row
+        "#{row[:cmd]} #{sc.args.shelljoin}"
       else
-        puterr "Base: Cannot determine if current dir is git, svn, or cvs. Exiting."
-        false
+        sc.pute "Base: Cannot determine if current dir is git, svn, or cvs. Exiting."
+        "false"
       end
     end
   end
