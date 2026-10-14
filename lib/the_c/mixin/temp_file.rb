@@ -10,35 +10,34 @@ module Mixin
      # Use `add_to_clean` to add globs and ttls to be cleaned here.
      #
     if $TheC__Mixin__TempFile_state.nil?
-      ->(state) do
+      $TheC__Mixin__TempFile_state = {}.tap { |state|
         state[:to_clean_tups] = []
-        state[:clean_thread] = begin
-          Thread.new do
-            loop do
-              state[:to_clean_tups].each do |(ttl_secs, glob_pattern)|
-                cutoff = Time.now - ttl_secs
-                Dir.glob(glob_pattern, File::FNM_DOTMATCH).each do |file|
-                  begin
-                    File.delete(file) if File.mtime(file) <= cutoff
-                  rescue
-                    ## If we get here the `mtime` or `delete` failed, so it's
-                     # already gone. This is fairly common because other processes
-                     # will have this same thread with the same globs.
-                    nil
-                  end
+        state[:lock] = Mutex.new
+        state[:clean_thread] = Thread.new {
+          until nil
+            sleep 60
+            tups = state[:lock].synchronize { state[:to_clean_tups].dup }
+            tups.each { |(ttl_secs, glob_pattern)|
+              cutoff = Time.now - ttl_secs
+              Dir.glob(glob_pattern, File::FNM_DOTMATCH).each { |file|
+                begin
+                  File.delete(file) if File.mtime(file) <= cutoff
+                rescue
+                  # If we get here the `mtime` or `delete` failed, so it's already gone. Not much to do.
+                  nil
                 end
-              end
-              sleep 60
-            end
+              }
+            }
           end
-        end
-      end.call($TheC__Mixin__TempFile_state = {})
+        }
+      }
     end
 
     def self.add_to_clean(ttl_secs, glob_pattern)
-      pairs = $TheC__Mixin__TempFile_state[:to_clean_tups]
+      state = $TheC__Mixin__TempFile_state
+      pairs = state[:to_clean_tups]
       new_pair = [ttl_secs, glob_pattern]
-      pairs << new_pair if ! pairs.member?(new_pair)
+      state[:lock].synchronize { pairs << new_pair if ! pairs.member?(new_pair) }
     end
 
     ## Create a unique temp file with optional given body, and return an object
@@ -53,7 +52,7 @@ module Mixin
       cache = @make_temp_file_cache ||= begin
         result = {}
         result[:seq] = 0
-        result[:template] = "#{fast_tmp_dir}/#{my_classname}-#{$$}-{{SEQ}}.tmp"
+        result[:template] = "#{fast_tmp_dir}/#{my_classname}-#{PID_S}-{{SEQ}}.tmp"
         result[:class] = Class.new do
           attr :io
           def initialize(path) = (@io = File.open(path, "w"); File.chmod(0600, path); io.sync = true)

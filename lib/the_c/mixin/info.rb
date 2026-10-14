@@ -5,11 +5,16 @@ module Mixin
   ## Generic methods for system or context info.
    #
   module Info
-    ## Query OS for total number of CPU threads and cache it.
-     #
-    def cpu_count
-      @cpu_count ||= IO.read("/proc/cpuinfo").scan(/^processor/).size
-    end
+    def base_path     = @base_path     ||= "#{work_root}/#{my_uid}"
+    def client_area   = @client_area   ||= "#{base_path}/clients/#{my_pid}"
+    def cpu_count     = @cpu_count     ||= IO.read("/proc/cpuinfo").scan(/^processor/).size
+    def in_out_delims = @in_out_delims ||= %w[-i -o] # Separate the base filename from pid for each pipe
+    def init_file     = @init_file     ||= "#{base_path}/init_#{PID_S}"
+    def my_pid        = @my_pid        ||= Process.pid.to_s
+    def my_uid        = @my_uid        ||= Process.uid.to_s
+    def pid_file      = @pid_file      ||= "#{server_area}/pid"
+    def server_area   = @server_area   ||= "#{base_path}/server"
+    def work_root     = @work_root     ||= "#{Dir.tmpdir}/#{File.basename($0)}"
 
     ## Find and cache a tmp dir to write to that is probably in memory.
      #

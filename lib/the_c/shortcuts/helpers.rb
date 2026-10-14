@@ -11,6 +11,12 @@ module Shortcuts
   module Helpers
     include TheC::Mixin::Util
 
+    @@uid ||= 0
+
+    @@tmpname_pfx ||= "/tmp/#{File.basename($0).gsub(/[^\w]+/, "")}_Shortcuts_"
+
+    Mixin::TempFile.add_to_clean(60, "#{@@tmpname_pfx}*")
+
     ## Instance access to the names added with the `add` DSL method.
      #
     def added_names = Dsl::AddedNames
@@ -35,15 +41,9 @@ module Shortcuts
     end
 
     ## Shorthand to combine calling `bash()` with result of `c()`.
-     # The end of the args may be `:echo` or `:errs` to match the same options
-     # supported by `bash()`.
      #
-    def cc(*args, **bash_opts2)
-      bash_opts = []
-      while %i[echo errs].member?(args.last)
-        bash_opts << args.pop
-      end
-      bash(c(*args), *bash_opts, **bash_opts2)
+    def cc(*args, **bash_opts)
+      bash(c(*args), **bash_opts)
     end
 
     ## Extract and eval special args sent from the `c` Bash function, formatted
@@ -94,43 +94,14 @@ module Shortcuts
       end
     end
 
-    ## Pass an IO to a user code block which captures lines written to it in a
-     # temp file. Then return bash code that uses the `:m` shortcut, which should
-     # run a pager command (e.g. `less`), to view that file.
+    ## Pass an IO to a user code block, and return a bash command that pages what it writes to the IO.
      #
-    def page(*args)
-      tmpfile = make_temp_file
-
-      # Let the user code block run without waiting
-      run = Thread.new do
-        begin
-          yield(tmpfile.io)
-        rescue Exception => e
-          quiet = SystemExit === e
-          tmpfile.io << e.full_message if ! quiet
-        end
-      end
-
-      ## Things are better if the entire file to view is written. So here we
-       # pause up to 3 secs for the client code to finish.
-      run_done = -> { ! run.status || run.status == "aborting" }
-      ts_end = Time.now + 3
-      sleep 0.1 while ! run_done[] && Time.now < ts_end
-
-      ## Now ready to pass control back to bash and display the file.
-       # We use `tail` here if the client code is still running, to force the
-       # pager to not assume the file is completely written.
-      pager = c(:m, *args)
-      if run_done[]
-        "#{pager} -F #{tmpfile.path.shellescape}" # `-F` = exit if 1 screen
-      else
-        # To keep the file open use `.io.path` here, not `.path`
-        "tail -f -n 7K #{tmpfile.io.path.shellescape} | #{pager} -+F" # `-+F` = stay open
-      end
+    def page(&block)
+      tmppipe(fifo = +"") { |io| block[io] }
+      "#{page_cmd} < #{fifo}"
     end
 
-    ## Pass an IO to a user code block which captures lines written to it in
-     # a String, and return that String as the result.
+    ## Pass an IO to a user code block which captures lines written to it in a String, and return that String.
      #
     def strout = StringIO.open { |io| yield(io); io.rewind; io.read }
 
@@ -201,50 +172,54 @@ module Shortcuts
       "$(ruby #{temp.path.shellescape})"
     end
 
-    ## Map certain keywords to ANSI color escape sequences.
-     #
-    def color_escape(words)
-      @color_escape ||= begin
-        {
-          fblack:   30, fred:       31, fgreen:   32, fyellow:   33,
-          fblue:    34, fmagenta:   35, fcyan:    36, fwhite:    37,
-          fbblack:  90, fbred:      91, fbgreen:  92, fbyellow:  93,
-          fbblue:   94, fbmagenta:  95, fbcyan:   96, fbwhite:   97,
-          bblack:   40, bred:       41, bgreen:   42, byellow:   43,
-          bblue:    44, bmagenta:   45, bcyan:    46, bwhite:    47,
-          bbblack: 100, bbred:     101, bbgreen: 102, bbyellow: 103,
-          bbblue:  104, bbmagenta: 105, bbcyan:  106, bbwhite:  107,
-          blink:     5, nblink:     25, reset:     0
-        }.map { |k, v| [k.to_s, v.to_s] }.to_h
-      end
-
-      words.map do |word|
-        word = word.to_s
-        (code = @color_escape[word]) ? "\e[#{code}m" : word
-      end.join
-    end
-
-    ## Colorize all matches of a regex.
-     #
-    def color_matches(text, regex, cole_name)
-      cole = color_escape([cole_name])
-      regex = /^/ if regex.source == "."
-      text.gsub(regex, "#{cole}\\0#{color_escape(["reset"])}")
-    end
-
     ## Single SOT for our standard options for `less`.
      #
     def less_opts = @less_opts ||= "-FIJMRSWX#8 --status-col-width=1"
 
+    # _________________________________________________________________________________________________________________
+
+    module ColorHelpers
+      @@color_escape = {
+        fblack:   30, fred:       31, fgreen:   32, fyellow:   33,
+        fblue:    34, fmagenta:   35, fcyan:    36, fwhite:    37,
+        fbblack:  90, fbred:      91, fbgreen:  92, fbyellow:  93,
+        fbblue:   94, fbmagenta:  95, fbcyan:   96, fbwhite:   97,
+        bblack:   40, bred:       41, bgreen:   42, byellow:   43,
+        bblue:    44, bmagenta:   45, bcyan:    46, bwhite:    47,
+        bbblack: 100, bbred:     101, bbgreen: 102, bbyellow: 103,
+        bbblue:  104, bbmagenta: 105, bbcyan:  106, bbwhite:  107,
+        blink:     5, nblink:     25, reset:     0
+      }.map { |k, v| [k.to_s, v.to_s] }.to_h.freeze
+
+      ## Map certain keywords to ANSI color escape sequences.
+       #
+      def color_escape(words)
+        words.map { |word|
+          word = word.to_s
+          (code = @@color_escape[word]) ? "\e[#{code}m" : word
+        }.join
+      end
+
+      ## Colorize all matches of a regex.
+       #
+      def color_matches(text, regex, cole_name)
+        cole = color_escape([cole_name])
+        regex = /^/ if regex.source == "."
+        text.gsub(regex, "#{cole}\\0#{color_escape(["reset"])}")
+      end
+    end # ColorHelpers
+
+    include ColorHelpers
+
+    # _________________________________________________________________________________________________________________
+
     ## State information for the PS1-related shortcuts.
      #
     class Ps1Helper
-      attr_accessor :last_rc, :ps1, :x_git
-      attr_reader   :context, :last_user
+      include ColorHelpers
 
-      def initialize(context)
-        @context = context
-      end
+      attr_accessor :last_rc, :ps1, :x_git
+      attr_reader   :last_user
 
       def check_last_user
         return if last_user == ENV["USER"]
@@ -256,16 +231,39 @@ module Shortcuts
       def uname_wrap
         # This will be cached in the `ps1` shortcut
         if ENV["USER"] == "root"
-          context.color_escape(%w[fbred bblack blink \\u nblink])
+          color_escape(%w[fbred bblack blink \\u nblink])
         else
-          context.color_escape(%w[fbgreen \\u])
+          color_escape(%w[fbgreen \\u])
         end
       end
     end # Ps1Helper
 
+    # _________________________________________________________________________________________________________________
+
     ## Single instance of PS1 state info.
      #
-    def ps1_helper = @ps1_helper ||= Ps1Helper.new(self)
+    def ps1_helper = @@ps1_helper ||= Ps1Helper.new
+
+    def tmpfile(pathname_buf, &gen_block)
+      assert_buf(pathname_buf)
+      tmp = pathname_buf.replace(new_tmpname)
+      write_file(tmp, gen_block)
+    end
+
+    def tmppipe(pathname_buf, &gen_block)
+      assert_buf(pathname_buf)
+      tmp = pathname_buf.replace(new_tmpname)
+      File.mkfifo(tmp, 0o600)
+      Thread.new { write_file(tmp, gen_block) }
+    end
+
+    def write_file(file, write_proc) = File.open(file, "wb") { |io| io.sync = true; write_proc[io] }
+
+    def assert_buf(buf) = String === buf && ! buf.frozen? or raise "Result buffer must be unfrozen String"
+
+    def new_tmpname = "#{@@tmpname_pfx}#{PID_S}_#{next_uid}.tmp"
+
+    def next_uid = @@uid += 1
   end
 end
 end

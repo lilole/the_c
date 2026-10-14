@@ -2,7 +2,10 @@
 load "../ultisel/load/arma.rake"
 
 arma.import arma: "../ultisel", version: nil, build: true,
-  include: Ulse.minimum_custom_includes
+  include: [
+    Ulse.minimum_custom_includes,
+    '^ulse/ext'
+  ]
 
 arma.plugin :Package,
   subject_root: "lib",

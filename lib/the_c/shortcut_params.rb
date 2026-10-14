@@ -5,24 +5,13 @@
 
 module TheC
   class ShortcutParams
-    @@uid = 0
-
-    attr_rw %i[args stderr stdin stdout]
+    attr_rw %i[stderr stdin stdout]
 
     def set!(*name_value_seq)
       name_value_seq.each_slice(2) { |name, value| send("#{name}=", value) }
       stdout.sync = true if stdout
       self
     end
-
-    def tmpfile(&gen_block)
-      tmp = "/tmp/#{File.basename($0)}_#{$$}_#{next_uid}.tmp"
-      File.open(tmp, "wt") { |io| gen_block[io] }
-      Thread.new { sleep 60; File.unlink(tmp) }
-      tmp
-    end
-
-    def next_uid = @@uid += 1
 
     def gets(*args, **kargs) = stdin.gets(*args, **kargs)
 

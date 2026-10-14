@@ -27,7 +27,7 @@ module TheC
      #    If nil or < 1, then use the max possible value for the machine.
      #    Any value is maxed at the machine CPU count.
      #
-    def initialize(paths, sort, stdout=$stdout, max_cpus: 2)
+    def initialize(paths, sort, stdout, max_cpus: 2)
       if Hash === paths
         @paths = paths.map { |dir, files| files.map { "#{dir}/#{_1}" } }.flatten
       elsif Array === paths

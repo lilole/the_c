@@ -5,7 +5,7 @@ require "shellwords"
 module TheC
   class SetPath
     def usage(msg=nil, exit_code=1)
-      $stderr << <<~END
+      io << <<~END
 
       #{msg || "Online help."}
 
@@ -26,6 +26,12 @@ module TheC
 
       END
       exit(exit_code) if exit_code
+    end
+
+    attr :io
+
+    def initialize(io)
+      @io = io
     end
 
     def run(args)
@@ -61,9 +67,9 @@ module TheC
         pos < 0 and dirs[pos, 1] = [dirs[pos]].concat(val_dirs)
         cur_path = dirs.uniq.join(":")
       end
-      ENV[var_name] = cur_path
+      ENV[var_name] = cur_path # Important for this process!
       cmd = "#{var_name}=#{cur_path.shellescape}"
-      quiet or $stderr << cmd << "\n"
+      quiet or io << cmd << "\n"
       new_dirs.any? ? cmd : "true"
     end
   end

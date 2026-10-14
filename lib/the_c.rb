@@ -36,7 +36,9 @@
 =end
 
 module TheC
-  VERSION = "2.6.40"
+  VERSION = "2.6.100"
+
+  PID_S = $$.to_s.freeze
 end
 
 #{{package_bootstrapper}}

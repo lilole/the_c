@@ -65,7 +65,7 @@ module Shortcuts
 
       dir = (sc.args[0] =~ /^u(\d+)$/) ? ([".."] * $~[1].to_i).join("/") : map[sc.args[0]]
       if ! dir
-        tmpfile = sc.tmpfile { |io|
+        return page { |io|
           width = map.values.map(&:size).max
           io << "Valid abbrevs:\n"
           map.sort { |a, b| a[1] <=> b[1] }.each { |abbrev, dir|
@@ -73,7 +73,6 @@ module Shortcuts
           }
           io << "Examples:\n  $ c d r mp4* # cd to matched subdir\n  $ ls -l `c d v` # List without cd\n"
         }
-        return "cat >&2 #{tmpfile}"
       end
 
       subs = sc.args[1..-1].join("/")
@@ -92,7 +91,7 @@ module Shortcuts
       name = sc.args[0] || "goo.gl"
       hr = "_" * 80
 
-      tmpfile = sc.tmpfile { |io|
+      page { |io|
         catch(:stop) {
           for rec in %w[A AAAA]
             for ipv, server in [%w[4 192.168.0.2], %w[6 2002:d1f0:3363:10:dea6:32ff:fe18:36db]]
@@ -106,7 +105,6 @@ module Shortcuts
           end
         }
       }
-      "#{page_cmd} #{tmpfile}"
     end
 
     add :ds, "Create a new Docker container as a bg service" do |sc|
@@ -139,42 +137,30 @@ module Shortcuts
 
     add :e, "Start the preferred editor if given an arg, otherwise just print the editor command" do |sc|
       editors = [
-        # In order of preference
-        { exe: "vscodium-electron", skip_if_no_params: true },
+        # In order of preference; also supported: args_if_no_params: [...]
+        { exe: "vscodium-electron", skip_if_no_params: true, args_if_params: %w[--reuse-window] },
         { exe: "vim" },
         { exe: "vi" }
       ]
       found = editors.detect { |props|
-        if    sc.args.none? && props[:skip_if_no_params] then false
-        elsif executable?(props[:exe])                   then true
-        else  false
-        end
+        ! (sc.args.empty? && props[:skip_if_no_params]) && executable?(props[:exe])
       }
       if ! found
-        "false"
+        cmd = ["false"]
       elsif sc.args.any?
-        args = sc.args.map { |a| File.realpath(a) rescue a }
-        [found[:exe], found[:args_if_params], args.shelljoin].compact.join(" ")
+        cmd = [found[:exe], found[:args_if_params], sc.args.map { |a| File.realpath(a) rescue a }]
       else
-        args = [found[:exe], found[:args_if_no_params]].compact
-        "echo #{args.shelljoin}"
+        cmd = ["echo", found[:exe], found[:args_if_no_params]]
       end
+      cmd.flatten.compact.shelljoin
     end
 
     add :ff, "Find paths matching regex" do |sc|
-      tmpfile = sc.tmpfile { |io|
-        Thread.new { Ffg::Cli.new(sc.args, io: io).run }
-      }
-      sleep 0.075 until File.readable?(tmpfile)
-      "#{pager_cmd} #{tmpfile}"
+      page { |io| Ffg::Cli.new(sc.args, io: io).run }
     end
 
     add :fg, "Find regex in files" do |sc|
-      tmpfile = sc.tmpfile { |io|
-        Thread.new { Ffg::Cli.new(%w[--fg].concat(sc.args), io: io).run }
-      }
-      sleep 0.075 until File.readable?(tmpfile)
-      "#{pager_cmd} #{tmpfile}"
+      page { |io| Ffg::Cli.new(%w[--fg].concat(sc.args), io: io).run }
     end
 
     add :gb, "Print current branch, or match first regex branch" do |sc|
@@ -200,7 +186,7 @@ module Shortcuts
 
     add :gcb, "Checkout first branch whose name matches given regex" do |sc|
       (re = sc.args[0]) or raise "Regex is required."
-      if (branch = cc(:gb, "-v", re, :errs).line)
+      if (branch = cc(:gb, "-v", re, errs: sc.stderr).line)
         "git checkout #{branch.shellescape}"
       else
         "false"
@@ -256,7 +242,7 @@ module Shortcuts
       }
       usage["Regex is required"] if ! re
 
-      br = cc(:gb, "-v", re, :errs).line or return "false"
+      br = cc(:gb, "-v", re, errs: sc.stderr).line or return "false"
       cmds = []
       cmds << "git push origin :#{br.shellescape}" if ! local
       cmds << "git branch -D #{br.shellescape}"
@@ -279,28 +265,24 @@ module Shortcuts
     add :glb, "List branches matching regex, or all by default" do |sc|
       re = Regexp.new(sc.args.shift || "^")
       dirs = sc.args.any? ? sc.args : ["."]
-      tmpfile = sc.tmpfile { |io|
-        Thread.new {
-          find_git_workspaces(dirs).each { |dir|
-            Dir.chdir(dir) {
-              ran = bash("git branch -vv")
-              lines = ran.ok? ? ran.lines.grep(re).join("\n") : ran.out
-              lines = "(No matches.)" if lines.empty?
-              io.puts "\n#{dir}\n#{lines}"
-            }
+      page { |io|
+        find_git_workspaces(dirs).each { |dir|
+          Dir.chdir(dir) {
+            ran = bash("git branch -vv")
+            lines = ran.ok? ? ran.lines.grep(re).join("\n") : ran.out
+            lines = "(No matches.)" if lines.empty?
+            io.puts "\n#{dir}\n#{lines}"
           }
         }
       }
-      sleep 0.075 until File.readable?(tmpfile)
-      "#{page_cmd} #{tmpfile}"
     end
 
     add :gmm, "Refresh and merge regex match of ARGV[0] or master/main down to current branch" do |sc|
-      this_br = cc(:gb, "-v", :errs).line
+      this_br = cc(:gb, "-v", errs: sc.stderr).line
       return "false" if ! this_br
 
       if (other_br = args[0])
-        other_br = cc(:gb, "-v", other_br, :errs).line
+        other_br = cc(:gb, "-v", other_br, errs: sc.stderr).line
         return "false" if ! other_br
       else
         other_br = cc(:gb, "-v", " (master|main)$").line
@@ -329,10 +311,10 @@ module Shortcuts
         return "false"
       end
 
-      other_br = cc(:gb, "-v", other_br, :errs).line
+      other_br = cc(:gb, "-v", other_br, errs: sc.stderr).line
       return "false" if ! other_br
 
-      this_br = cc(:gb, "-v", :errs).line
+      this_br = cc(:gb, "-v", errs: sc.stderr).line
       return "false" if ! this_br
 
       sc.puts "Merging #{this_br.inspect} up to #{other_br.inspect}..."
@@ -354,9 +336,9 @@ module Shortcuts
       end
 
       if (base = args[1])
-        base = cc(:gb, "-v", base, :errs).line
+        base = cc(:gb, "-v", base, errs: sc.stderr).line
       else
-        base = cc(:gb, "-v", :errs).line
+        base = cc(:gb, "-v", errs: sc.stderr).line
       end
       return "false" if ! base
 
@@ -391,7 +373,7 @@ module Shortcuts
         dirs << arg
       end
 
-      tmpfile = sc.tmpfile { |io| Thread.new {
+      page { |io|
         cwd_re = Regexp.escape(Dir.pwd)
         files = Hash.new { |h, k| h[k] = [] }
         dirs.each { |dir|
@@ -417,9 +399,7 @@ module Shortcuts
             io << "\n#{dir}#{msg}:\n#{file_lines}\n"
           }
         }
-      } }
-      sleep 0.075 until File.readable?(tmpfile)
-      "#{page_cmd} #{tmpfile}"
+      }
     end
 
     add :gu, "Smarter git update, handles git subdirs" do |sc|
@@ -438,7 +418,7 @@ module Shortcuts
       end
       dirs << "." if dirs.empty?
 
-      tmpfile = sc.tmpfile { |io| Thread.new {
+      page { |io|
         find_git_workspaces(dirs).each { |dir|
           Dir.chdir(dir) {
             io << "\n#{dir}"
@@ -471,9 +451,7 @@ module Shortcuts
             end
           }
         }
-      } }
-      sleep 0.075 until File.readable?(tmpfile)
-      "#{page_cmd} #{tmpfile}"
+      }
     end
 
     add :h, "Dan's safe history wrapper" do |sc|
@@ -498,12 +476,13 @@ module Shortcuts
     add :jc, "Run journalctl our way" do |sc|
       less = "#{less_opts} +G"
       args = %W[env SYSTEMD_PAGER=less SYSTEMD_LESS=#{less} journalctl --no-hostname] + sc.args
-      args.member?("--user") ? args.shelljoin : c(:sudo, *args)
+      sc.args.member?("--user") ? args.shelljoin : c(:sudo, *args)
     end
 
     add :l, "Run ls the preferred way" do |sc|
-      "LANG=C ls -alF --group-directories-first --block-size=\\'1 --color=always #{sc.args.shelljoin}" \
-        " |& #{c :m}"
+      "LANG=C ls -alF --group-directories-first --block-size=\\'1 --color=always" \
+      " #{sc.args.shelljoin}" \
+      " |& #{page_cmd}"
     end
 
     add :lc, "Load predefined text into clipboard" do |sc|
@@ -546,7 +525,7 @@ module Shortcuts
       one_line = clip.inspect.gsub("$", "\\\\$") # We need this because `.shellescape` leaves LFs
 
       "echo -e #{one_line} | xclip -in -rmlastnl -selection clipboard" \
-        " && echo #{"Loaded clip: #{name.inspect}".shellescape}"
+      " && echo #{"Loaded clip: #{name.inspect}".shellescape}"
     end
 
     add :less_options, "The standard opts for `less`" do |sc|
@@ -637,27 +616,25 @@ module Shortcuts
       }
       script = "ffprobe -hide_banner -loglevel quiet -print_format json" \
         " -show_format -show_streams -show_chapters -analyzeduration #{4 * 3600 * 10**6}"
-      tmpfile = sc.tmpfile { |io| Thread.new {
+      page { |io|
         for file in files
           io.puts "\n+ #{file.inspect}"; gb = 10**9
           sz = (v = File.size(file)) > 16*gb ? v / 4 : (v > 8*gb ? v / 2 : (v > 4*gb ? 4*gb : v))
           raw = `#{script} -probesize #{sz} #{file.shellescape}`.strip
           io.puts(full ? raw : common[raw])
         end
-      } }
-      sleep 0.075 until File.readable?(tmpfile)
-      "#{page_cmd} #{tmpfile}"
+      }
     end
 
     add :need_screen, "Return success if on a tty at home" do |sc|
       "#{c :at_home} && #{c :x, "screen"}" \
-        " && [[ ! $WINDIR && $USER == dan && $(tty) == /dev/tty[12] ]]"
+      " && [[ ! $WINDIR && $USER == dan && $(tty) == /dev/tty[12] ]]"
     end
 
     add :need_x, "Return success if startx should be run" do |sc|
       "(#{c :at_home} || #{c :at_work})" \
-        " && [[ ! $WINDIR && $USER == dan && $(tty) == /dev/tty1 ]]" \
-        " && ! pgrep '^X(org)?$' &> /dev/null"
+      " && [[ ! $WINDIR && $USER == dan && $(tty) == /dev/tty1 ]]" \
+      " && ! pgrep '^X(org)?$' &> /dev/null"
     end
 
     add :o, "Open files in their default viewer apps" do |sc|
@@ -665,7 +642,10 @@ module Shortcuts
       return err["No files given."] if sc.args.empty?
       return err["Not configured for file viewer in this env."] if ! executable?("xdg-open")
 
-      sc.args.each { |f| spawn("xdg-open #{f.shellescape}", out: sc.stdout, err: sc.stderr) }
+      sc.args.each { |f|
+        pid = spawn("xdg-open #{f.shellescape}", out: sc.stdout, err: sc.stderr)
+        Process.detach(pid)
+      }
       "true"
     end
 
@@ -751,17 +731,13 @@ module Shortcuts
       lines = begin
         bash("ps -ewwH -o sid,pgid,ppid,pid,uid,tty,stat,cmd").lines
         .map.with_index { |ln, i|
-          if i == 0
-            color_escape(%W[fbgreen #{ln} reset])
-          elsif regex.match?(ln)
-            color_matches(ln, regex, "fbyellow")
-          else
-            nil
+          if    i == 0           then color_escape(%W[fbgreen #{ln} reset])
+          elsif regex.match?(ln) then color_matches(ln, regex, "fbyellow")
+          else  nil
           end
         }.compact
       end
-      tmpfile = sc.tmpfile { |io| io.puts lines.join("\n") }
-      "#{c :m} +G #{tmpfile}"
+      page { |io| io.puts lines.join("\n") }
     end
 
     add :psync, "Sync abs pathnames from current / to matched ones below ROOT/ subdirs" do |sc|
@@ -771,7 +747,7 @@ module Shortcuts
         return "false"
       end
 
-      tmpfile = sc.tmpfile { |io|
+      page { |io|
         for root in roots
           io.puts "\n#{"_" * 80}\nProcess relative root: #{root.inspect}"
 
@@ -798,7 +774,6 @@ module Shortcuts
           }
         end
       }
-      "#{page_cmd} #{tmpfile}"
     end
 
     add :rce, "Edit ~/code/bash/bashrc" do |sc|
@@ -851,13 +826,7 @@ module Shortcuts
     end
 
     add :rl, "Recursive listing of files or dirs, sortable by date or size or count" do |sc|
-      tmpfile = sc.tmpfile { |io|
-        Thread.new {
-          RecursiveList.new.run(sc.args, io: io)
-        }
-      }
-      sleep 0.075 until File.readable?(tmpfile)
-      "#{page_cmd} #{tmpfile}"
+      page { |io| RecursiveList.new.run(sc.args, io: io) }
     end
 
     add :roots, "Select roots of dir trees containing a named subdir" do |sc|
@@ -878,8 +847,7 @@ module Shortcuts
         .map(&:lstrip)
         .sort
       end
-      tmpfile = sc.tmpfile { |io| io.puts matches.join }
-      "#{page_cmd} #{tmpfile}"
+      page { |io| io.puts matches.join }
     end
 
     add :setpath, "Clever path manipulator, guarantees proper ordering and deduping" do |sc|
@@ -902,9 +870,9 @@ module Shortcuts
       result = nil
       if @upd == "pacman"
         if sc.args[0] == "c"
-          result = "#{c :sudo} pacman -Sy && pacman -Qu #{sc.args[1..-1].shelljoin} | #{c :m}"
+          result = "#{c :sudo} pacman -Sy && pacman -Qu #{sc.args[1..-1].shelljoin} | #{page_cmd}"
         elsif sc.args[0][0..1] == "-Q"
-          result = "pacman #{sc.args.shelljoin} | #{c :m}"
+          result = "pacman #{sc.args.shelljoin} | #{page_cmd}"
         end
       end
       result || c(:sudo, @upd, *sc.args)
@@ -921,7 +889,7 @@ module Shortcuts
 
     add :ui, "Arch package details, --nn for max depth" do |sc|
       depth = "2"
-      tmpfile = sc.tmpfile { |io| Thread.new {
+      page { |io|
         sc.args.each { |arg|
           if arg =~ /^--(\d+)$/
             depth = $~[1]
@@ -932,24 +900,18 @@ module Shortcuts
           io.puts "\n#{out}"
           bash("pactree -rd#{depth} #{arg.shellescape}", echo: io)
         }
-      } }
-      sleep 0.075 until File.readable?(tmpfile)
-      "#{page_cmd} #{tmpfile}"
+      }
     end
 
     add :vb, "View binary files" do |sc|
       cmd = "od -Ad -tx1z -w30"
       return "#{cmd} - | #{c :m}" if sc.args.empty? || sc.args.member?("-")
-      tmpfile = sc.tmpfile { |io|
-        Thread.new {
-          sc.args.each { |file|
-            io << "\n+ #{file.inspect}\n" if args.size > 1
-            bash("#{cmd} #{file.shellescape}", echo: io)
-          }
+      page { |io|
+        sc.args.each { |file|
+          io << "\n+ #{file.inspect}\n" if args.size > 1
+          bash("#{cmd} #{file.shellescape}", echo: io)
         }
       }
-      sleep 0.075 until File.readable?(tmpfile)
-      "#{page_cmd} #{tmpfile}"
     end
 
     add :x, "Are all given commands executable" do |sc|

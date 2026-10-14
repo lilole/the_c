@@ -14,7 +14,7 @@ module Mixin
      #
     def say(*strings, nolf: false)
       return if ! Say.io
-      Say.io << "++ #{self.class.name} #{$$}: " if ! nolf
+      Say.io << "++ #{self.class.name} #{PID_S}: " if ! nolf
       Say.io << strings.join
       Say.io << "\n" if ! nolf || strings.empty?
     end
